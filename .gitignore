@@ -1,0 +1,36 @@
+.env
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Large models or datasets
+*.pt
+*.pth
+*.h5
+*.pkl
+*.csv
+*.json
+
+# Local databases
+*.db
+*.sqlite3
+
+# Ignore the entire data directory
+data/
+
+# Ignore python cache files
+__pycache__/
+backend/__pycache__/
+backend/api/__pycache__/
+backend/api/routes/__pycache__/
+
+# Ignore OS files
+.DS_Store
+backend/.DS_Store
+
+data/
+__pycache__/
+.DS_Storedata/
+__pycache__/
+.DS_Store

@@ -1,0 +1,12 @@
+pandas
+numpy 
+streamlit
+matplotlib
+seaborn
+huggingface-hub
+datasets
+torch
+transformers
+scikit-learn
+langgraph 
+langchain-openai
