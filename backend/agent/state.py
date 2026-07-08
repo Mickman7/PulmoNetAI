@@ -1,12 +1,20 @@
-from typing_extensions import TypedDict
-from typing import Optional
+from typing import TypedDict, Optional, List
+
+
+class PredictionRecord(TypedDict):
+    """One selected past prediction — the agent may reason over several of these."""
+    created_at: str
+    probability: float
+    label: str
+    attention_focus: str
+    notes: str
+    wbc: Optional[float]
+    crp: Optional[float]
+
 
 class AgentState(TypedDict):
-    probability: float          # Model's raw sigmoid output
-    attention_focus: str        # Human-readable summary of attention spread
-    notes: str
-    wbc: float
-    crp: float
-    analysis: Optional[str]     # Filled in by analysis_node
-    reasoning: Optional[str]    # Filled in by reasoning_node
-    report: Optional[str]       # Filled in by report_node
+    patient_summary: str              # structured medical history, rendered as text
+    records: List[PredictionRecord]   # clinician-selected predictions, oldest -> newest
+    analysis: Optional[str]
+    reasoning: Optional[str]
+    report: Optional[str]

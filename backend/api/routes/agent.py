@@ -1,0 +1,63 @@
+"""
+Note on attention weights: attn_weights are only computed at inference time
+and are not persisted to the DB (they're a large tensor, not something you'd
+want stored per-row in SQLite). For past predictions, we mark attention_focus
+as unavailable rather than silently fabricating it -- the analysis node still
+has the probability, label, and lab/notes trend to reason over.
+"""
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from ...database.db import get_db
+from ...database import crud
+from ...agent.graph import agent
+from ...agent.utils import build_patient_summary
+from .. import schema
+
+router = APIRouter(prefix="/agent", tags=["agent"])
+
+
+@router.post("/run", response_model=schema.ReportOut)
+def run_agent(payload: schema.AgentRunRequest, db: Session = Depends(get_db)):
+    patient = crud.get_patient(db, payload.patient_id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    predictions = crud.get_predictions_by_ids(db, payload.prediction_ids)
+    if not predictions:
+        raise HTTPException(status_code=400, detail="No matching predictions found for the given IDs")
+
+    # oldest -> newest, so the analysis node can reason about trends in order
+    predictions = sorted(predictions, key=lambda p: p.created_at)
+
+    records = [
+        {
+            "created_at": p.created_at.isoformat(),
+            "probability": p.probability,
+            "label": p.label,
+            "attention_focus": "Not available (historical record)",
+            "notes": p.notes or "",
+            "wbc": p.wbc,
+            "crp": p.crp,
+        }
+        for p in predictions
+    ]
+
+    initial_state = {
+        "patient_summary": build_patient_summary(patient),
+        "records": records,
+        "analysis": None,
+        "reasoning": None,
+        "report": None,
+    }
+
+    final_state = agent.invoke(initial_state)
+
+    report = crud.create_report(db, payload.patient_id, {
+        "source_prediction_ids": payload.prediction_ids,
+        "analysis": final_state["analysis"],
+        "reasoning": final_state["reasoning"],
+        "report_text": final_state["report"],
+    })
+    return report

@@ -1,10 +1,26 @@
-import os
-from fastapi import FastAPI
 from dotenv import load_dotenv
+load_dotenv() 
 
-# Load variables from .env file before initializing routes or models
-load_dotenv()
+from fastapi import FastAPI
 
-app = FastAPI(title="PulmoNetAI API")
+from ..database.db import init_db
+from .routes import patients, predict, agent
+import os
 
-# Include your routes below...
+
+app = FastAPI(title="Pulmo API")
+
+
+@app.on_event("startup")
+def on_startup():
+    init_db()  # creates tables if they don't exist yet
+
+
+app.include_router(patients.router)
+app.include_router(predict.router)
+app.include_router(agent.router)
+
+
+@app.get("/")
+def root():
+    return {"status": "Pulmo API running"}
