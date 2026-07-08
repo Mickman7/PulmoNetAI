@@ -66,6 +66,9 @@ def delete_patient(db: Session, patient_id: int) -> None:
     db.delete(patient)
     db.commit()
 
+def get_all_patients(db: Session) -> list[models.Patient]:
+    return db.query(models.Patient).order_by(models.Patient.name).all()
+
 
 # ---------------------------------------------------------------------------
 # Prediction CRUD

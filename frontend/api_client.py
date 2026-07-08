@@ -37,3 +37,8 @@ def run_agent(patient_id: int, prediction_ids: list[int]) -> dict:
     r = requests.post(f"{API_BASE_URL}/agent/run", json=payload)
     r.raise_for_status()
     return r.json()
+
+def list_patients() -> list[dict]:
+    r = requests.get(f"{API_BASE_URL}/patients")
+    r.raise_for_status()
+    return r.json()

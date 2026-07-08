@@ -59,3 +59,7 @@ def get_patient_reports(patient_id: int, db: Session = Depends(get_db)):
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     return crud.get_reports_for_patient(db, patient_id)
+
+@router.get("", response_model=list[schema.PatientOut])
+def list_patients(db: Session = Depends(get_db)):
+    return crud.get_all_patients(db)
