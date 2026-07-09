@@ -1,9 +1,3 @@
-"""
-Single entrypoint for running the model. Both the /predict route and the
-agent (which needs probability + attention weights) call into predict()
-so preprocessing logic isn't duplicated across the codebase.
-"""
-
 from functools import lru_cache
 
 import torch
@@ -12,7 +6,7 @@ from transformers import AutoTokenizer, AutoImageProcessor
 
 from .multimodal_system import MultimodalSystem, IMAGE_MODEL_NAME, TEXT_MODEL_NAME
 
-MODEL_WEIGHTS_PATH = "backend/models/multimodal_pneumonia_model.pth"  # <-- update to your .pth
+MODEL_WEIGHTS_PATH = "backend/models/multimodal_pneumonia_model.pth"
 
 
 @lru_cache(maxsize=1)
@@ -35,18 +29,25 @@ def predict(image_path: str, notes: str, wbc: float, crp: float) -> dict:
     model = load_model()
     img_processor, tokenizer = load_processors()
 
+    # 1. Image Preprocessing
     img = Image.open(image_path).convert("RGB")
     pixel_values = img_processor(img, return_tensors="pt")["pixel_values"]
 
+    # 2. Text Preprocessing
     text_str = f"Notes: {notes}. WBC: {wbc}. CRP: {crp}."
     text_inputs = tokenizer(text_str, return_tensors="pt", padding=True, truncation=True)
 
+    # 3. Lab Results Preprocessing for 1D-CNN Branch
+    # Formats to a 2D floating-point tensor vector matching training configuration
+    labs_tensor = torch.tensor([[float(wbc), float(crp)]]).float()
+
     with torch.no_grad():
-        logits, attn_weights = model(pixel_values, text_inputs, return_attention=True)
+        # Pass the explicit labs tensor into the updated forward call signature
+        logits, attn_weights = model(pixel_values, text_inputs, labs_tensor=labs_tensor, return_attention=True)
         probability = torch.sigmoid(logits).item()
 
     return {
         "probability": probability,
         "label": "Pneumonia" if probability > 0.5 else "Normal",
-        "attn_weights": attn_weights,  # kept in-memory only, not persisted to DB
+        "attn_weights": attn_weights,
     }

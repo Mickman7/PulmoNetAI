@@ -3,6 +3,8 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import cv2
+import matplotlib.pyplot as plt
 from sklearn.metrics import (
     classification_report, 
     confusion_matrix, 
@@ -167,3 +169,32 @@ def run_evaluation(model, test_loader, device):
             
             print(f"  - Input Sequence Data Captured: {case['raw_text_input'][:120]}...")
     print("="*60 + "\n")
+
+
+
+
+def plot_attention_overlay(original_image_path, attn_weights_sample):
+    """
+    Saves a visual overlay mapping the 64 cross-attention weights 
+    directly onto the original chest X-ray image.
+    """
+    # 1. Reshape the 64 flattened patch weights into an 8x8 spatial grid
+    attn_grid = attn_weights_sample.reshape(8, 8)
+    
+    # 2. Normalize and upscale the grid to match standard image dimensions
+    attn_normalized = (attn_grid - attn_grid.min()) / (attn_grid.max() - attn_grid.min())
+    heatmap = cv2.resize(attn_normalized, (256, 256))
+    heatmap = np.uint8(255 * heatmap)
+    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    
+    # 3. Load original image and overlay the attention map
+    orig_img = cv2.imread(original_image_path)
+    orig_img = cv2.resize(orig_img, (256, 256))
+    
+    overlay = cv2.addWeighted(orig_img, 0.6, heatmap, 0.4, 0)
+    
+    plt.figure(figsize=(6, 6))
+    plt.imshow(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB))
+    plt.axis('off')
+    plt.title("Cross-Attention Diagnostic Overlay")
+    plt.show()

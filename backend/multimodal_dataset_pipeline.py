@@ -53,7 +53,6 @@ else:
     def transform(examples):
         pixel_values = img_processor([img.convert("RGB") for img in examples["image"]], return_tensors="pt")["pixel_values"]
         
-        # Enforce textual processing sequences for Bio_ClinicalBERT
         texts = [f"Notes: {n}. WBC: {w}. CRP: {c}." for n, w, c in zip(examples['Notes'], examples['WBC_Count'], examples['CRP_Level'])]
         inputs = tokenizer(texts, padding="max_length", truncation=True, max_length=128, return_tensors="pt")
 
@@ -62,9 +61,9 @@ else:
             "input_ids": inputs["input_ids"],
             "attention_mask": inputs["attention_mask"],
             "labels": torch.tensor(examples["label"]).float().unsqueeze(1),
-            # Maintain explicit raw physiological floating points for the 1D-CNN branch
             "wbc": torch.tensor(examples["WBC_Count"]).float(),
-            "crp": torch.tensor(examples["CRP_Level"]).float()
+            "crp": torch.tensor(examples["CRP_Level"]).float(),
+            "text_raw": texts 
         }
 
     print("Applying multimodal transformations...")
