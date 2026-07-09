@@ -46,9 +46,12 @@ def run_evaluation(model, test_loader, device):
                 "input_ids": batch["input_ids"].to(device),
                 "attention_mask": batch["attention_mask"].to(device)
             }
+            
+            # Extract and stack physiological lab variables for the 1D-CNN branch
+            labs_tensor = torch.stack([batch["wbc"], batch["crp"]], dim=-1).float().to(device)
 
-            # Extract predictions and multihead cross-attention mappings
-            logits, attn_weights = model(images, text_input, return_attention=True)
+            # Extract predictions and multihead cross-attention mappings with all three required inputs
+            logits, attn_weights = model(images, text_input, labs_tensor=labs_tensor, return_attention=True)
             probs = torch.sigmoid(logits).cpu().numpy().flatten()    
             preds = (probs > 0.5).astype(int)
             labels_np = labels.cpu().numpy().flatten()
@@ -139,7 +142,6 @@ def run_evaluation(model, test_loader, device):
     if len(error_cases) == 0:
         print("Exceptional Performance: Zero verification error boundaries tripped across the test split.")
     else:
-        # Isolate borderline vs highly overconfident errors
         borderline_errors = [e for e in error_cases if 0.4 <= e["model_probability"] <= 0.6]
         critical_errors = [e for e in error_cases if e["model_probability"] < 0.15 or e["model_probability"] > 0.85]
         
@@ -148,7 +150,6 @@ def run_evaluation(model, test_loader, device):
         print("-"*60)
         
         print("\nDisplaying Sample Critical Error Trajectories:")
-        # Display the top 3 most distinct critical failures for analytical triage
         for idx, case in enumerate(critical_errors[:3]):
             print(f"\n[Critical Failure Case #{idx + 1}]")
             print(f"  - System True Target Condition: {'Pneumonia' if case['true_label'] == 1 else 'Normal'}")
@@ -156,7 +157,6 @@ def run_evaluation(model, test_loader, device):
             print(f"  - Output Sigmoid Probability: {case['model_probability']:.4%}")
             
             if case["attention_weights"] is not None:
-                # Track maximum attention density distribution peak
                 max_attn_val = case["attention_weights"].max()
                 mean_attn_val = case["attention_weights"].mean()
                 print(f"  - Cross-Attention Variance Peak: {max_attn_val:.4f} (Mean Baseline: {mean_attn_val:.4f})")

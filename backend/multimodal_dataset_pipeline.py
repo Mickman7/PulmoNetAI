@@ -49,10 +49,11 @@ else:
     img_processor = AutoImageProcessor.from_pretrained("microsoft/swinv2-tiny-patch4-window8-256")
     tokenizer = AutoTokenizer.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
 
-    # 5. Transform function for tokenization and image processing
+    # 5. Transform function updated to retain and pass raw numerical parameters
     def transform(examples):
         pixel_values = img_processor([img.convert("RGB") for img in examples["image"]], return_tensors="pt")["pixel_values"]
         
+        # Enforce textual processing sequences for Bio_ClinicalBERT
         texts = [f"Notes: {n}. WBC: {w}. CRP: {c}." for n, w, c in zip(examples['Notes'], examples['WBC_Count'], examples['CRP_Level'])]
         inputs = tokenizer(texts, padding="max_length", truncation=True, max_length=128, return_tensors="pt")
 
@@ -60,11 +61,13 @@ else:
             "pixel_values": pixel_values,
             "input_ids": inputs["input_ids"],
             "attention_mask": inputs["attention_mask"],
-            "labels": torch.tensor(examples["label"]).float().unsqueeze(1)
+            "labels": torch.tensor(examples["label"]).float().unsqueeze(1),
+            # Maintain explicit raw physiological floating points for the 1D-CNN branch
+            "wbc": torch.tensor(examples["WBC_Count"]).float(),
+            "crp": torch.tensor(examples["CRP_Level"]).float()
         }
 
     print("Applying multimodal transformations...")
-    # Apply the transformations to the dataset
     ds_final = ds_merged.map(transform, batched=True, remove_columns=ds_merged.column_names)
 
     # 6. Save the processed dataset locally
