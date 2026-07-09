@@ -17,14 +17,14 @@ from sklearn.metrics import classification_report, confusion_matrix
 from evaluation import run_evaluation
 
 # 1. Argument Parsing
-parser = argparse.ArgumentParser(description="PulmoNetAI Tri-Modal Training Script")
+parser = argparse.ArgumentParser(description="PulmoNetAI Joint-Sequence Training Script")
 parser.add_argument("--lrs", nargs="+", type=float, default=[1e-5, 3e-5], help="List of learning rates to evaluate")
 parser.add_argument("--dropouts", nargs="+", type=float, default=[0.3, 0.5], help="List of dropout probabilities to evaluate")
 parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs per run")
 parser.add_argument("--batch_size", type=int, default=16, help="Training batch size")
 args = parser.parse_args()
 
-# Device Selection (Optimized for Mac M4 Hardware Acceleration)
+# Device Selection
 if torch.backends.mps.is_available():
     device = torch.device("mps")
 elif torch.cuda.is_available():
@@ -64,11 +64,10 @@ val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_w
 test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
 
-# 2. Tri-Modal Architecture Definition
+# 2. Industry-Standard Architecture Blueprint
 class MultimodalSystem(nn.Module):
     def __init__(self, embed_dim=512, dropout=0.3, freeze_encoders=True):
         super().__init__()
-        # Encoders
         self.image_encoder = AutoModel.from_pretrained("microsoft/swinv2-tiny-patch4-window8-256")
         self.text_encoder = AutoModel.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
 
@@ -79,62 +78,57 @@ class MultimodalSystem(nn.Module):
                 param.requires_grad = False
 
         # --- LAB RESULTS BRANCH: 1D-CNN ---
-        # Input tensor shape: [Batch, Channels=1, Sequence_Length=2] (representing [WBC, CRP])
         self.lab_cnn = nn.Sequential(
             nn.Conv1d(in_channels=1, out_channels=32, kernel_size=2, stride=1, padding=1),
             nn.BatchNorm1d(32),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.AdaptiveAvgPool1d(1)  # Collapses sequence down to [Batch, 32, 1]
+            nn.AdaptiveAvgPool1d(1)
         )
         self.lab_proj = nn.Linear(32, embed_dim)
 
-        # Projections for Vision and Text
         self.img_proj = nn.Linear(self.image_encoder.config.hidden_size, embed_dim)
         self.text_proj = nn.Linear(self.text_encoder.config.hidden_size, embed_dim)
 
-        # Multi-Modal Fusion Layers
+        # Multi-Modal Fusion Layer (Joint Sequence Context Space)
         self.fusion = nn.MultiheadAttention(embed_dim, num_heads=8, batch_first=True)
         self.norm = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
         
-        # Classification layer processes the concatenated embeddings from all 3 modalities
-        self.classifier = nn.Linear(embed_dim * 2, 1)
+        # Linear Head scales directly from the unified 512-dim embedding space
+        self.classifier = nn.Linear(embed_dim, 1)
 
     def forward(self, images, text_input, labs_tensor, return_attention=False):
-        # 1. Process Images via Swin
-        img_features = self.image_encoder(images).last_hidden_state  # [Batch, Patches, Hidden]
-        img_vector = self.img_proj(img_features)                     # [Batch, Patches, Embed_Dim]
+        img_features = self.image_encoder(images).last_hidden_state  
+        img_vector = self.img_proj(img_features)                     
 
-        # 2. Process Text via ClinicalBERT
-        text_features = self.text_encoder(**text_input).pooler_output  # [Batch, Hidden]
-        text_vector = self.text_proj(text_features)                    # [Batch, Embed_Dim]
+        text_features = self.text_encoder(**text_input).pooler_output  
+        text_vector = self.text_proj(text_features)                    
 
-        # 3. Process Physiological Lab Data via 1D-CNN
-        # Reshape labs from [Batch, 2] to [Batch, Channels=1, Sequence=2]
         labs_formatted = labs_tensor.unsqueeze(1)
-        lab_features = self.lab_cnn(labs_formatted).squeeze(-1)         # [Batch, 32]
-        lab_vector = self.lab_proj(lab_features)                        # [Batch, Embed_Dim]
+        lab_features = self.lab_cnn(labs_formatted).squeeze(-1)         
+        lab_vector = self.lab_proj(lab_features)                        
 
-        # 4. Multi-Modal Attention Cross-Fusion (Image and Text)
+        # Inject lab tokens directly into the Key/Value attention sequence pool
+        lab_sequence_token = lab_vector.unsqueeze(1)
+        kv_combined = torch.cat([img_vector, lab_sequence_token], dim=1)
+
         query = text_vector.unsqueeze(1)                
-        attention_out, attn_weights = self.fusion(query, img_vector, img_vector)
-        fused_text_img = self.norm(attention_out.squeeze(1) + text_vector)
-        fused_text_img = self.dropout(fused_text_img)
+        attention_out, attn_weights = self.fusion(query, kv_combined, kv_combined)
+        
+        fused_embeddings = self.norm(attention_out.squeeze(1) + text_vector)
+        fused_embeddings = self.dropout(fused_embeddings)
 
-        # 5. Final Concat Fusion (Combining Attended Text/Image with the Lab 1D-CNN Vector)
-        final_flat_vector = torch.cat([fused_text_img, lab_vector], dim=-1) # [Batch, Embed_Dim * 2]
-        logits = self.classifier(final_flat_vector)
+        logits = self.classifier(fused_embeddings)
 
         if return_attention:
             return logits, attn_weights
         return logits
 
-# Initialize base prototype template for feature extraction caching
 base_model = MultimodalSystem(freeze_encoders=True).to(device)
 
 
-# 3. Create and Save Cached Embeddings (Now including raw Lab sequences)
+# 3. Feature Extraction Cache Engine
 os.makedirs("cached_embeddings", exist_ok=True)
 base_model.eval()
 
@@ -147,7 +141,6 @@ def cache_split_features(loader, prefix):
                 "input_ids": batch["input_ids"].to(device),
                 "attention_mask": batch["attention_mask"].to(device)
             }
-            # Stack WBC and CRP together into a single sequence vector row
             labs = torch.stack([batch["wbc"], batch["crp"]], dim=-1).float()
 
             img_feat = base_model.image_encoder(images).last_hidden_state.cpu()   
@@ -166,10 +159,8 @@ def cache_split_features(loader, prefix):
 print("Extracting and caching tri-modal train/validation split features...")
 cache_split_features(train_loader, "train")
 cache_split_features(val_loader, "val")
-print("Cached split embeddings saved successfully.")
 
 
-# 4. Custom Dataset for Pre-computed Features
 class CachedDataset(Dataset):
     def __init__(self, prefix):
         self.img_feats = torch.load(f"cached_embeddings/{prefix}_img_features.pt")
@@ -190,20 +181,19 @@ train_cached_loader = DataLoader(train_cached, batch_size=args.batch_size, shuff
 val_cached_loader = DataLoader(val_cached, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
 
-# 5. Hyperparameter Tuning Grid
+# 4. Hyperparameter Tuning Grid Search
 best_val_loss = float("inf")
 best_model_state = None
 
 for lr in args.lrs:
     for dropout_val in args.dropouts:
-        print(f"\n--- Launching Tuning Profile: LR={lr} | Dropout={dropout_val} ---")
+        print(f"\n--- Tuning Profile: LR={lr} | Dropout={dropout_val} ---")
         
         model = MultimodalSystem(dropout=dropout_val, freeze_encoders=True).to(device)
         optimiser = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
         criterion = nn.BCEWithLogitsLoss()
 
         for epoch in range(args.epochs):
-            # Training Mode
             model.train()
             total_loss = 0.0
             correct_train = 0
@@ -213,7 +203,6 @@ for lr in args.lrs:
                 optimiser.zero_grad()
                 img_feat, text_feat, labs, labels = img_feat.to(device), text_feat.to(device), labs.to(device), labels.to(device)
 
-                # Process cache metrics through projections and the 1D-CNN
                 img_vector = model.img_proj(img_feat)
                 text_vector = model.text_proj(text_feat)
                 
@@ -221,13 +210,16 @@ for lr in args.lrs:
                 lab_features = model.lab_cnn(labs_formatted).squeeze(-1)
                 lab_vector = model.lab_proj(lab_features)
 
-                query = text_vector.unsqueeze(1)
-                attention_out, _ = model.fusion(query, img_vector, img_vector)
-                fused_text_img = model.norm(attention_out.squeeze(1) + text_vector)
-                fused_text_img = model.dropout(fused_text_img)
+                # Execute attention pooling inside the tuning epoch steps
+                lab_sequence_token = lab_vector.unsqueeze(1)
+                kv_combined = torch.cat([img_vector, lab_sequence_token], dim=1)
 
-                final_flat_vector = torch.cat([fused_text_img, lab_vector], dim=-1)
-                logits = model.classifier(final_flat_vector)
+                query = text_vector.unsqueeze(1)
+                attention_out, _ = model.fusion(query, kv_combined, kv_combined)
+                
+                fused_embeddings = model.norm(attention_out.squeeze(1) + text_vector)
+                fused_embeddings = model.dropout(fused_embeddings)
+                logits = model.classifier(fused_embeddings)
 
                 loss = criterion(logits, labels)
                 loss.backward()
@@ -241,7 +233,6 @@ for lr in args.lrs:
             train_loss = total_loss / len(train_cached_loader)
             train_acc = correct_train / total_train
 
-            # Validation Mode
             model.eval()
             val_loss_accum = 0.0
             correct_val = 0
@@ -258,13 +249,15 @@ for lr in args.lrs:
                     lab_features = model.lab_cnn(labs_formatted).squeeze(-1)
                     lab_vector = model.lab_proj(lab_features)
 
-                    query = text_vector.unsqueeze(1)
-                    attention_out, _ = model.fusion(query, img_vector, img_vector)
-                    fused_text_img = model.norm(attention_out.squeeze(1) + text_vector)
-                    fused_text_img = model.dropout(fused_text_img)
+                    lab_sequence_token = lab_vector.unsqueeze(1)
+                    kv_combined = torch.cat([img_vector, lab_sequence_token], dim=1)
 
-                    final_flat_vector = torch.cat([fused_text_img, lab_vector], dim=-1)
-                    logits = model.classifier(final_flat_vector)
+                    query = text_vector.unsqueeze(1)
+                    attention_out, _ = model.fusion(query, kv_combined, kv_combined)
+                    
+                    fused_embeddings = model.norm(attention_out.squeeze(1) + text_vector)
+                    fused_embeddings = model.dropout(fused_embeddings)
+                    logits = model.classifier(fused_embeddings)
 
                     loss = criterion(logits, labels)
                     val_loss_accum += loss.item()
@@ -282,22 +275,19 @@ for lr in args.lrs:
             best_val_loss = val_loss
             best_model_state = model.state_dict()
 
-# Load weights of the best performing variant
 final_model = MultimodalSystem(freeze_encoders=True).to(device)
 final_model.load_state_dict(best_model_state)
 
 
-# 6. Model File Save & Overwrite
+# 5. File Serialization
 PATH = "/Users/mickman/Documents/programs/PulmoNetAI/backend/models/multimodal_pneumonia_model.pth"
 parent_dir = os.path.dirname(PATH)
 os.makedirs(parent_dir, exist_ok=True)
 
 if os.path.exists(PATH):
-    print(f"Stale model variant detected at target path. Overwriting {PATH}...")
     os.remove(PATH)
 
 torch.save(final_model.state_dict(), PATH)
-print(f"Optimised tri-modal model weights written to file system space: {PATH}")
+print(f"Optimised weights successfully deployed to production space: {PATH}")
 
-# Note: Update your run_evaluation script parameters if you change the test execution dimensions.
 run_evaluation(final_model, test_loader, device)

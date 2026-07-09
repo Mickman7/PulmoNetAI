@@ -1,10 +1,3 @@
-"""
-Note: text extraction from uploaded TXT/PDF notes files happens in the
-frontend (see pulmo_app / Streamlit pages) before this call -- the API
-always receives plain `notes` text plus numeric wbc/crp. This keeps the
-API contract simple and framework-agnostic.
-"""
-
 import os
 import uuid
 
@@ -16,6 +9,8 @@ from ...database.db import get_db
 from ...database import crud
 from ...models import inference
 from .. import schema
+from backend.agent.utils import summarize_attention
+
 
 router = APIRouter(prefix="/predict", tags=["predict"])
 
@@ -43,8 +38,13 @@ def run_prediction(
     pil_image = Image.open(image.file).convert("RGB")
     pil_image.save(image_path)
 
+    # 1. Run the multimodal forward pass
     result = inference.predict(image_path, notes, wbc, crp)
 
+    # 2. Extract attention summary text to persist in the database
+    attention_string_label = summarize_attention(result["attn_weights"])
+
+    # 3. Create the database row with the saved attention summary text
     prediction = crud.create_prediction(db, patient_id, {
         "image_path": image_path,
         "notes": notes,
@@ -52,5 +52,6 @@ def run_prediction(
         "crp": crp,
         "probability": result["probability"],
         "label": result["label"],
+        "attention_summary": attention_string_label,
     })
     return prediction

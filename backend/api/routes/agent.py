@@ -36,7 +36,8 @@ def run_agent(payload: schema.AgentRunRequest, db: Session = Depends(get_db)):
             "created_at": p.created_at.isoformat(),
             "probability": p.probability,
             "label": p.label,
-            "attention_focus": "Not available (historical record)",
+            # Read the saved text description instead of hardcoding "Not available"
+            "attention_focus": p.attention_summary if p.attention_summary else "spread broadly across the image (suggests a diffuse or less certain finding)",
             "notes": p.notes or "",
             "wbc": p.wbc,
             "crp": p.crp,

@@ -43,19 +43,18 @@ class Prediction(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
-
-    image_path = Column(String, nullable=False)  # file on disk, e.g. storage/patient_images/3/7.jpg
-    notes = Column(Text, nullable=True)
+    image_path = Column(String, nullable=False)
+    notes = Column(String, nullable=True)
     wbc = Column(Float, nullable=True)
     crp = Column(Float, nullable=True)
-
     probability = Column(Float, nullable=False)
-    label = Column(String, nullable=False)  # "Pneumonia" / "Normal"
+    label = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    attention_summary = Column(String, nullable=True)
 
+    # Relationships
     patient = relationship("Patient", back_populates="predictions")
-
 
 class Report(Base):
     __tablename__ = "reports"

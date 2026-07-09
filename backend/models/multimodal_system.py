@@ -32,13 +32,13 @@ class MultimodalSystem(nn.Module):
         self.img_proj = nn.Linear(self.image_encoder.config.hidden_size, embed_dim)
         self.text_proj = nn.Linear(self.text_encoder.config.hidden_size, embed_dim)
 
-        # Multi-Modal Fusion Layers
+        # Multi-Modal Fusion Layers (Processes the joint 65-token sequence pool)
         self.fusion = nn.MultiheadAttention(embed_dim, num_heads=8, batch_first=True)
         self.norm = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
         
-        # Classification layer processes the combined text/image and lab outputs (512 * 2 = 1024)
-        self.classifier = nn.Linear(embed_dim * 2, 1)
+        # Classification layer handles the single, unified 512-dim embedding
+        self.classifier = nn.Linear(embed_dim, 1)
 
     def forward(self, images, text_input, labs_tensor, return_attention=False):
         # 1. Process Images
@@ -54,15 +54,24 @@ class MultimodalSystem(nn.Module):
         lab_features = self.lab_cnn(labs_formatted).squeeze(-1)         
         lab_vector = self.lab_proj(lab_features)                        
 
-        # 4. Multi-Modal Cross-Attention (Image and Text)
-        query = text_vector.unsqueeze(1)                
-        attention_out, attn_weights = self.fusion(query, img_vector, img_vector)
-        fused_text_img = self.norm(attention_out.squeeze(1) + text_vector)
-        fused_text_img = self.dropout(fused_text_img)
+        # 4. Construct the Joint Sequence Context Pool (K and V)
+        # Add sequence dimension to labs: [Batch, 512] -> [Batch, 1, 512]
+        lab_sequence_token = lab_vector.unsqueeze(1)
 
-        # 5. Concat Fusion with Lab Vector
-        final_flat_vector = torch.cat([fused_text_img, lab_vector], dim=-1) 
-        logits = self.classifier(final_flat_vector)
+        # Concatenate image patches and lab token along the sequence dimension (dim 1)
+        # Resulting shape: [Batch, 65, 512]
+        kv_combined = torch.cat([img_vector, lab_sequence_token], dim=1)
+
+        # 5. Cross-Attention Multihead Execution
+        query = text_vector.unsqueeze(1)                
+        attention_out, attn_weights = self.fusion(query, kv_combined, kv_combined)
+        
+        # Residual Connection
+        fused_embeddings = self.norm(attention_out.squeeze(1) + text_vector)
+        fused_embeddings = self.dropout(fused_embeddings)
+
+        # 6. Final Class Prediction
+        logits = self.classifier(fused_embeddings)
 
         if return_attention:
             return logits, attn_weights

@@ -1,3 +1,9 @@
+"""
+Single entrypoint for running the model. Both the /predict route and the
+agent (which needs probability + attention weights) call into predict()
+so preprocessing logic isn't duplicated across the codebase.
+"""
+
 from functools import lru_cache
 
 import torch
@@ -38,11 +44,10 @@ def predict(image_path: str, notes: str, wbc: float, crp: float) -> dict:
     text_inputs = tokenizer(text_str, return_tensors="pt", padding=True, truncation=True)
 
     # 3. Lab Results Preprocessing for 1D-CNN Branch
-    # Formats to a 2D floating-point tensor vector matching training configuration
     labs_tensor = torch.tensor([[float(wbc), float(crp)]]).float()
 
     with torch.no_grad():
-        # Pass the explicit labs tensor into the updated forward call signature
+        # Pass the inputs into the joint sequence pool forward pass
         logits, attn_weights = model(pixel_values, text_inputs, labs_tensor=labs_tensor, return_attention=True)
         probability = torch.sigmoid(logits).item()
 

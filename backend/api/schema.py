@@ -44,6 +44,8 @@ class PredictionOut(BaseModel):
     crp: Optional[float]
     probability: float
     label: str
+    # --- ADD THIS STRING TO MATCH PIPELINE PERSISTENCE ---
+    attention_summary: Optional[str] = None
     created_at: datetime
 
     class Config:

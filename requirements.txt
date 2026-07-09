@@ -29,3 +29,4 @@ streamlit
 requests
 pypdf
 pillow
+opencv-python
