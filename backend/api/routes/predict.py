@@ -4,6 +4,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from PIL import Image
+from codecarbon import EmissionsTracker
 
 from ...database.db import get_db
 from ...database import crud
@@ -38,8 +39,35 @@ def run_prediction(
     pil_image = Image.open(image.file).convert("RGB")
     pil_image.save(image_path)
 
-    # 1. Run the multimodal forward pass
-    result = inference.predict(image_path, notes, wbc, crp)
+    # Use absolute paths to eliminate workspace profile conflicts
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    evaluation_results_dir = os.path.join(base_dir, "evaluation_results")
+    os.makedirs(evaluation_results_dir, exist_ok=True)
+
+    # 1. Generate absolute pathing for the execution workspace
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    evaluation_results_dir = os.path.join(base_dir, "evaluation_results")
+    os.makedirs(evaluation_results_dir, exist_ok=True)
+
+    # 2. Write a clean configuration file directly into the active working directory
+    config_path = os.path.join(os.getcwd(), ".codecarbon.config")
+    with open(config_path, "w") as f:
+        f.write("[codecarbon]\n")
+        f.write(f"project_name = pulmonet_live_inference\n")
+        f.write("save_to_file = true\n")
+        f.write(f"output_dir = {evaluation_results_dir}\n")
+        f.write("log_level = warning\n")
+
+    tracker = EmissionsTracker()
+    
+    
+    tracker.start()
+    try:
+        # 1. Run the multimodal forward pass
+        result = inference.predict(image_path, notes, wbc, crp)
+    finally:
+        tracker.stop()
+
 
     # 2. Extract attention summary text to persist in the database
     attention_string_label = summarize_attention(result["attn_weights"])

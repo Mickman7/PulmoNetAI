@@ -60,7 +60,9 @@ else:
 # --- 4. Predict ----------------------------------------------------------
 st.header("4. Prediction")
 if st.button("Predict", type="primary"):
-    if image_file is None:
+    if selected_patient is None:
+        st.error("Please select a patient.")
+    elif image_file is None:
         st.error("Please upload a radiograph image.")
     elif not notes.strip():
         st.error("Please provide clinical notes.")

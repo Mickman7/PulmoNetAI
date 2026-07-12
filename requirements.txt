@@ -30,3 +30,6 @@ requests
 pypdf
 pillow
 opencv-python
+
+codecarbon
+pypdf
