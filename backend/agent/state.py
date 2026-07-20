@@ -10,6 +10,7 @@ class PredictionRecord(TypedDict):
     notes: str
     wbc: Optional[float]
     crp: Optional[float]
+    vitals_summary: Optional[str]
 
 
 class AgentState(TypedDict):

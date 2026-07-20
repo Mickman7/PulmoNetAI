@@ -13,7 +13,7 @@ app = FastAPI(title="Pulmo API")
 
 @app.on_event("startup")
 def on_startup():
-    init_db()  # creates tables if they don't exist yet
+    init_db()  
 
 
 app.include_router(patients.router)
