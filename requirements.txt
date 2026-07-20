@@ -33,3 +33,4 @@ opencv-python
 
 codecarbon
 pypdf
+reportlab
