@@ -1,0 +1,51 @@
+RESPIRATORY CONSULTATION REPORT
+DOCUMENT TYPE: CLINICAL DIAGNOSTIC EVALUATION (AI-ASSISTED)
+
+Fill every field using ONLY the source information provided in the prompt.
+For any field where the source information does not contain a value, write
+exactly: Not available/Not assessed. Never estimate, infer, or fabricate a
+value to fill a gap.
+
+1. PATIENT DEMOGRAPHICS & VITALS
+Full Name: [Name]
+Date of Birth: [DOB]
+Age / Sex: [Age / Sex]
+Date of Assessment: [Date of most recent selected encounter]
+
+Vitals Log:
+- Heart Rate: [HR] bpm
+- Blood Pressure: [BP] mmHg
+- Respiratory Rate: [RR] breaths/min
+- Temperature: [Temp] deg C
+- Oxygen Saturation: [SpO2]%
+
+2. CLINICAL PRESENTATION & HISTORY
+Primary Symptom Profile:
+[Summarise duration, onset, and severity of symptoms from the clinical notes provided]
+
+Relevant Medical Background:
+[Summarise chronic conditions, allergies, medications, past surgeries, smoking status, and family history from the patient history provided]
+
+Physical Examination Findings:
+- General Appearance: [Findings]
+- Chest Auscultation: [Findings]
+- Percussion: [Findings]
+
+3. DIAGNOSTIC INVESTIGATIONS
+Radiology Findings (Chest Radiograph):
+[Describe the model's image attention pattern and what it suggests about the radiographic findings -- do not describe specific radiological features not implied by the attention summary]
+
+Laboratory Evaluations:
+- White Cell Count (WBC): [Value] x10^9/L
+- C-Reactive Protein (CRP): [Value] mg/L
+- Arterial Blood Gas: [Value]
+- Microbiology: [Value]
+
+4. CLINICAL INTERPRETATION
+Diagnostic Synthesis:
+[Synthesise the model's prediction, probability, image attention, lab values, and vitals (where available) into a coherent clinical interpretation, drawing on the Modality Analysis and Consistency Check provided. If multiple encounters were reviewed, note how findings differed between them without implying the model tracks trends over time -- each encounter is evaluated independently.]
+
+5. MANAGEMENT & THERAPEUTIC PLAN
+Care Setting Recommendation: [Outpatient / Further clinical review / Not assessed]
+Recommended Next Steps: [e.g. flag for radiologist review, repeat labs, routine follow-up]
+Follow-up Strategy: [Repeat imaging timing, clinical review timeline, if warranted]
