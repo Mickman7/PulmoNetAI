@@ -1,9 +1,8 @@
-"""
-Single entrypoint for running the model. Both the /predict route and the
-agent (which needs probability + attention weights) call into predict()
-so preprocessing logic isn't duplicated across the codebase.
-"""
+"""Loads the trained model + processors once (cached), and runs a single prediction.
+Updated: forward() now requires labs_tensor (WBC/CRP via the 1D-CNN branch),
+so predict() builds that tensor from the wbc/crp values passed in."""
 
+import os
 from functools import lru_cache
 
 import torch
@@ -12,14 +11,18 @@ from transformers import AutoTokenizer, AutoImageProcessor
 
 from .multimodal_system import MultimodalSystem, IMAGE_MODEL_NAME, TEXT_MODEL_NAME
 
-MODEL_WEIGHTS_PATH = "backend/models/multimodal_pneumonia_model.pth"
+MODEL_WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "multimodal_pneumonia_model.pth")
+DEVICE = torch.device("mps") if torch.backends.mps.is_available() else (
+    torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+)
 
 
 @lru_cache(maxsize=1)
-def load_model() -> MultimodalSystem:
+def load_model():
     model = MultimodalSystem(freeze_encoders=True)
-    model.load_state_dict(torch.load(MODEL_WEIGHTS_PATH, map_location="cpu"))
+    model.load_state_dict(torch.load(MODEL_WEIGHTS_PATH, map_location=DEVICE))
     model.eval()
+    model.to(DEVICE)
     return model
 
 
@@ -31,28 +34,20 @@ def load_processors():
 
 
 def predict(image_path: str, notes: str, wbc: float, crp: float) -> dict:
-    """Runs the full forward pass and returns everything downstream consumers need."""
     model = load_model()
     img_processor, tokenizer = load_processors()
 
-    # 1. Image Preprocessing
     img = Image.open(image_path).convert("RGB")
-    pixel_values = img_processor(img, return_tensors="pt")["pixel_values"]
+    pixel_values = img_processor(img, return_tensors="pt")["pixel_values"].to(DEVICE)
 
-    # 2. Text Preprocessing
-    text_str = f"Notes: {notes}. WBC: {wbc}. CRP: {crp}."
-    text_inputs = tokenizer(text_str, return_tensors="pt", padding=True, truncation=True)
+    text_inputs = tokenizer(notes, return_tensors="pt", padding=True, truncation=True)
+    text_inputs = {k: v.to(DEVICE) for k, v in text_inputs.items()}
 
-    # 3. Lab Results Preprocessing for 1D-CNN Branch
-    labs_tensor = torch.tensor([[float(wbc), float(crp)]]).float()
+    labs_tensor = torch.tensor([[wbc, crp]], dtype=torch.float32).to(DEVICE)
 
     with torch.no_grad():
-        # Pass the inputs into the joint sequence pool forward pass
-        logits, attn_weights = model(pixel_values, text_inputs, labs_tensor=labs_tensor, return_attention=True)
+        logits, attn_weights = model(pixel_values, text_inputs, labs_tensor, return_attention=True)
         probability = torch.sigmoid(logits).item()
 
-    return {
-        "probability": probability,
-        "label": "Pneumonia" if probability > 0.5 else "Normal",
-        "attn_weights": attn_weights,
-    }
+    label = "Pneumonia" if probability > 0.5 else "Normal"
+    return {"probability": probability, "label": label, "attn_weights": attn_weights}

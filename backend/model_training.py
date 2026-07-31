@@ -15,6 +15,7 @@ from transformers import AutoModel, AutoTokenizer, AutoImageProcessor
 from sklearn.metrics import classification_report, confusion_matrix
 
 from evaluation import run_evaluation
+from models.multimodal_system import MultimodalSystem  # <-- single source of truth, no local redefinition
 
 # 1. Argument Parsing
 parser = argparse.ArgumentParser(description="PulmoNetAI Joint-Sequence Training Script")
@@ -64,67 +65,9 @@ val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_w
 test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
 
-# 2. Industry-Standard Architecture Blueprint
-class MultimodalSystem(nn.Module):
-    def __init__(self, embed_dim=512, dropout=0.3, freeze_encoders=True):
-        super().__init__()
-        self.image_encoder = AutoModel.from_pretrained("microsoft/swinv2-tiny-patch4-window8-256")
-        self.text_encoder = AutoModel.from_pretrained("emilyalsentzer/Bio_ClinicalBERT")
-
-        if freeze_encoders:
-            for param in self.image_encoder.parameters():
-                param.requires_grad = False
-            for param in self.text_encoder.parameters():
-                param.requires_grad = False
-
-        # --- LAB RESULTS BRANCH: 1D-CNN ---
-        self.lab_cnn = nn.Sequential(
-            nn.Conv1d(in_channels=1, out_channels=32, kernel_size=2, stride=1, padding=1),
-            nn.BatchNorm1d(32),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.AdaptiveAvgPool1d(1)
-        )
-        self.lab_proj = nn.Linear(32, embed_dim)
-
-        self.img_proj = nn.Linear(self.image_encoder.config.hidden_size, embed_dim)
-        self.text_proj = nn.Linear(self.text_encoder.config.hidden_size, embed_dim)
-
-        # Multi-Modal Fusion Layer (Joint Sequence Context Space)
-        self.fusion = nn.MultiheadAttention(embed_dim, num_heads=8, batch_first=True)
-        self.norm = nn.LayerNorm(embed_dim)
-        self.dropout = nn.Dropout(dropout)
-        
-        # Linear Head scales directly from the unified 512-dim embedding space
-        self.classifier = nn.Linear(embed_dim, 1)
-
-    def forward(self, images, text_input, labs_tensor, return_attention=False):
-        img_features = self.image_encoder(images).last_hidden_state  
-        img_vector = self.img_proj(img_features)                     
-
-        text_features = self.text_encoder(**text_input).pooler_output  
-        text_vector = self.text_proj(text_features)                    
-
-        labs_formatted = labs_tensor.unsqueeze(1)
-        lab_features = self.lab_cnn(labs_formatted).squeeze(-1)         
-        lab_vector = self.lab_proj(lab_features)                        
-
-        # Inject lab tokens directly into the Key/Value attention sequence pool
-        lab_sequence_token = lab_vector.unsqueeze(1)
-        kv_combined = torch.cat([img_vector, lab_sequence_token], dim=1)
-
-        query = text_vector.unsqueeze(1)                
-        attention_out, attn_weights = self.fusion(query, kv_combined, kv_combined)
-        
-        fused_embeddings = self.norm(attention_out.squeeze(1) + text_vector)
-        fused_embeddings = self.dropout(fused_embeddings)
-
-        logits = self.classifier(fused_embeddings)
-
-        if return_attention:
-            return logits, attn_weights
-        return logits
-
+# 2. Model -- imported from models/multimodal_system.py, not redefined here.
+# This is the ONLY place the architecture is defined now, so training and
+# inference can never drift apart again.
 base_model = MultimodalSystem(freeze_encoders=True).to(device)
 
 
