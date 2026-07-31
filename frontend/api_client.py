@@ -3,11 +3,23 @@ calling `requests` directly, so the base URL only needs to change in one place."
 
 import requests
 
-API_BASE_URL = "http://localhost:8000"  # <-- update if your API runs elsewhere
+API_BASE_URL = "http://localhost:8000"  
+
+
+def list_patients() -> list[dict]:
+    r = requests.get(f"{API_BASE_URL}/patients")
+    r.raise_for_status()
+    return r.json()
 
 
 def search_patients(query: str) -> list[dict]:
     r = requests.get(f"{API_BASE_URL}/patients/search", params={"q": query})
+    r.raise_for_status()
+    return r.json()
+
+
+def get_patient(patient_id: int) -> dict:
+    r = requests.get(f"{API_BASE_URL}/patients/{patient_id}")
     r.raise_for_status()
     return r.json()
 
@@ -38,7 +50,41 @@ def run_agent(patient_id: int, prediction_ids: list[int]) -> dict:
     r.raise_for_status()
     return r.json()
 
-def list_patients() -> list[dict]:
-    r = requests.get(f"{API_BASE_URL}/patients")
+
+# --- Clinical encounters (vitals, physical exam, microbiology, ABG) --------
+def get_encounters(patient_id: int) -> list[dict]:
+    r = requests.get(f"{API_BASE_URL}/patients/{patient_id}/encounters")
+    r.raise_for_status()
+    return r.json()
+
+
+def add_encounter(patient_id: int, payload: dict) -> dict:
+    r = requests.post(f"{API_BASE_URL}/patients/{patient_id}/encounters", json=payload)
+    r.raise_for_status()
+    return r.json()
+
+
+# --- Appointments -----------------------------------------------------------
+def get_appointments(patient_id: int) -> list[dict]:
+    r = requests.get(f"{API_BASE_URL}/patients/{patient_id}/appointments")
+    r.raise_for_status()
+    return r.json()
+
+
+def add_appointment(patient_id: int, payload: dict) -> dict:
+    r = requests.post(f"{API_BASE_URL}/patients/{patient_id}/appointments", json=payload)
+    r.raise_for_status()
+    return r.json()
+
+
+# --- Treatments ---------------------------------------------------------------
+def get_treatments(patient_id: int) -> list[dict]:
+    r = requests.get(f"{API_BASE_URL}/patients/{patient_id}/treatments")
+    r.raise_for_status()
+    return r.json()
+
+
+def add_treatment(patient_id: int, payload: dict) -> dict:
+    r = requests.post(f"{API_BASE_URL}/patients/{patient_id}/treatments", json=payload)
     r.raise_for_status()
     return r.json()

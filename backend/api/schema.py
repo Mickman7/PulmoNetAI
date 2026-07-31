@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # ---------------------------------------------------------------------------
@@ -12,25 +12,42 @@ class PatientCreate(BaseModel):
     date_of_birth: Optional[str] = None
     sex: Optional[str] = None
     contact_info: Optional[str] = None
-    allergies: List[str] = []
-    chronic_conditions: List[str] = []
-    current_medications: List[str] = []
-    past_surgeries: List[str] = []
+    allergies: list[str] = []
+    chronic_conditions: list[str] = []
+    current_medications: list[str] = []
+    past_surgeries: list[str] = []
     smoking_status: Optional[str] = None
     family_history: Optional[str] = None
-
-
-class PatientUpdate(PatientCreate):
-    name: Optional[str] = None  # allow partial updates
-
-
-class PatientOut(PatientCreate):
+ 
+ 
+class PatientUpdate(BaseModel):
+    name: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    sex: Optional[str] = None
+    contact_info: Optional[str] = None
+    allergies: Optional[list[str]] = None
+    chronic_conditions: Optional[list[str]] = None
+    current_medications: Optional[list[str]] = None
+    past_surgeries: Optional[list[str]] = None
+    smoking_status: Optional[str] = None
+    family_history: Optional[str] = None
+ 
+ 
+class PatientOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+ 
     id: int
+    name: str
+    date_of_birth: Optional[str]
+    sex: Optional[str]
+    contact_info: Optional[str]
+    allergies: list[str]
+    chronic_conditions: list[str]
+    current_medications: list[str]
+    past_surgeries: list[str]
+    smoking_status: Optional[str]
+    family_history: Optional[str]
     created_at: datetime
-
-    class Config:
-        from_attributes = True
-
 
 # ---------------------------------------------------------------------------
 # Prediction
@@ -71,3 +88,87 @@ class ReportOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+
+# ---------------------------------------------------------------------------
+# ClinicalEncounter
+# ---------------------------------------------------------------------------
+class EncounterCreate(BaseModel):
+    encounter_date: Optional[datetime] = None
+    heart_rate: Optional[float] = None
+    blood_pressure: Optional[str] = None
+    respiratory_rate: Optional[float] = None
+    temperature: Optional[float] = None
+    spo2: Optional[float] = None
+    general_appearance: Optional[str] = None
+    chest_auscultation: Optional[str] = None
+    percussion: Optional[str] = None
+    microbiology: Optional[str] = None
+    abg: Optional[str] = None
+    notes: Optional[str] = None
+ 
+ 
+class EncounterOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+ 
+    id: int
+    patient_id: int
+    encounter_date: datetime
+    heart_rate: Optional[float]
+    blood_pressure: Optional[str]
+    respiratory_rate: Optional[float]
+    temperature: Optional[float]
+    spo2: Optional[float]
+    general_appearance: Optional[str]
+    chest_auscultation: Optional[str]
+    percussion: Optional[str]
+    microbiology: Optional[str]
+    abg: Optional[str]
+    notes: Optional[str]
+ 
+ 
+# ---------------------------------------------------------------------------
+# Appointment
+# ---------------------------------------------------------------------------
+class AppointmentCreate(BaseModel):
+    appointment_date: datetime
+    reason: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+ 
+ 
+class AppointmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+ 
+    id: int
+    patient_id: int
+    appointment_date: datetime
+    reason: Optional[str]
+    status: Optional[str]
+    notes: Optional[str]
+ 
+ 
+# ---------------------------------------------------------------------------
+# Treatment
+# ---------------------------------------------------------------------------
+class TreatmentCreate(BaseModel):
+    start_date: datetime
+    description: str
+    dosage: Optional[str] = None
+    route: Optional[str] = None
+    duration: Optional[str] = None
+    notes: Optional[str] = None
+ 
+ 
+class TreatmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+ 
+    id: int
+    patient_id: int
+    start_date: datetime
+    description: str
+    dosage: Optional[str]
+    route: Optional[str]
+    duration: Optional[str]
+    notes: Optional[str]
