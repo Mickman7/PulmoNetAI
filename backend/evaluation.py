@@ -1,4 +1,4 @@
-# backend/eval_metrics.py
+# backend/evaluation.py
 import os
 import cv2
 import matplotlib.pyplot as plt
@@ -72,7 +72,7 @@ def run_evaluation(
                     ).to(device),
                 }
 
-            # 3. Labs (1D-CNN)
+            # 3. Labs (Static WBC/CRP)
             if modality_mode == "trimodal":
                 labs_tensor = (
                     torch.stack([batch["wbc"], batch["crp"]], dim=-1)
@@ -84,9 +84,22 @@ def run_evaluation(
                     (batch["labels"].shape[0], 2), device=device
                 )
 
+            # 4. Vitals (24x8 Temporal Sequence)
+            if modality_mode == "trimodal" and "vitals" in batch:
+                vitals_tensor = batch["vitals"].float().to(device)
+            else:
+                # Shape matches (Batch, Seq_Len=24, Features=8)
+                vitals_tensor = torch.zeros(
+                    (batch["labels"].shape[0], 24, 8), device=device
+                )
+
             # Model Forward Pass
             logits, attn_weights = model(
-                images, text_input, labs_tensor=labs_tensor, return_attention=True
+                images,
+                text_input,
+                labs_tensor=labs_tensor,
+                vitals_tensor=vitals_tensor,
+                return_attention=True,
             )
             probs = torch.sigmoid(logits).cpu().numpy().flatten()
             preds = (probs > 0.5).astype(int)

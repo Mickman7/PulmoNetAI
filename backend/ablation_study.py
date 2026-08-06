@@ -1,23 +1,3 @@
-"""
-Ablation study across 4 input conditions:
-  1) Vision only
-  2) Text only
-  3) Vision + Text
-  4) Vision + Text + Labs (Proposed)
-
-Design note: your MultimodalSystem architecture always uses text as the
-cross-attention Query (image/labs are Key/Value), so there's no way to run
-"vision only" or ablate a modality by zeroing its input on the ONE jointly
-trained model -- it never learned to handle a zeroed vector meaningfully,
-so that would not be a valid measurement.
-
-Instead, each condition below is a separate lightweight classifier head,
-trained on the SAME train/test split, reusing embeddings extracted ONCE from
-your frozen SwinV2/ClinicalBERT encoders (they never change across
-conditions since they're frozen) -- this keeps the 4-way comparison fast and
-fair, since each head only has to learn the fusion/classification step.
-"""
-
 import os
 
 import matplotlib.pyplot as plt
@@ -26,13 +6,14 @@ import pandas as pd
 import seaborn as sns
 import torch
 import torch.nn as nn
+from datasets import load_from_disk
 from sklearn.metrics import (
     accuracy_score,
+    auc,
     classification_report,
     confusion_matrix,
     precision_recall_fscore_support,
     roc_curve,
-    auc,
 )
 from torch.utils.data import DataLoader, Dataset
 
@@ -40,14 +21,13 @@ from models.multimodal_system import MultimodalSystem
 
 OUTPUT_DIR = "ablation_results"
 EMBED_DIM = 512
-NUM_EPOCHS = 5  # heads are small and train fast on cached embeddings
+NUM_EPOCHS = 15
 
 
 # ---------------------------------------------------------------------------
-# 1. Extract and cache frozen-encoder embeddings ONCE (shared by all 4 heads)
+# 1. Extract and cache frozen-encoder embeddings
 # ---------------------------------------------------------------------------
 def extract_embeddings(model, loader, device):
-    """Runs the frozen encoders once and returns cached tensors for every head to reuse."""
     model.eval()
     img_seqs, text_pooled, labs, labels = [], [], [], []
 
@@ -60,8 +40,8 @@ def extract_embeddings(model, loader, device):
             }
             labs_tensor = torch.stack([batch["wbc"], batch["crp"]], dim=-1).float().to(device)
 
-            img_features = model.image_encoder(images).last_hidden_state  # [B, num_patches, hidden]
-            text_features = model.text_encoder(**text_input).pooler_output  # [B, hidden]
+            img_features = model.image_encoder(images).last_hidden_state
+            text_features = model.text_encoder(**text_input).pooler_output
 
             img_seqs.append(img_features.cpu())
             text_pooled.append(text_features.cpu())
@@ -69,7 +49,10 @@ def extract_embeddings(model, loader, device):
             labels.append(batch["labels"].cpu())
 
     return (
-        torch.cat(img_seqs), torch.cat(text_pooled), torch.cat(labs), torch.cat(labels)
+        torch.cat(img_seqs),
+        torch.cat(text_pooled),
+        torch.cat(labs),
+        torch.cat(labels),
     )
 
 
@@ -88,63 +71,71 @@ class CachedEmbeddingDataset(Dataset):
 
 
 # ---------------------------------------------------------------------------
-# 2. Four condition-specific heads
+# 2. Model Heads
 # ---------------------------------------------------------------------------
 class VisionOnlyHead(nn.Module):
-    """Mean-pools image patch tokens, no text/labs involved at all."""
     def __init__(self, img_hidden_size, embed_dim=EMBED_DIM, dropout=0.3):
         super().__init__()
         self.img_proj = nn.Linear(img_hidden_size, embed_dim)
+        self.img_norm = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(embed_dim, 1)
 
-    def forward(self, img_seq, text_pooled=None, labs=None):
-        img_vector = self.img_proj(img_seq)       # [B, num_patches, embed_dim]
-        pooled = img_vector.mean(dim=1)            # mean-pool across patches
+    def forward(self, img_seq, text_pooled=None, labs=None, **kwargs):
+        img_vector = self.img_norm(self.img_proj(img_seq))
+        pooled = img_vector.mean(dim=1)
         pooled = self.dropout(pooled)
         return self.classifier(pooled)
 
 
 class TextOnlyHead(nn.Module):
-    """Text pooled embedding straight to a classifier, no image/labs involved."""
     def __init__(self, text_hidden_size, embed_dim=EMBED_DIM, dropout=0.3):
         super().__init__()
         self.text_proj = nn.Linear(text_hidden_size, embed_dim)
+        self.text_norm = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(embed_dim, 1)
 
-    def forward(self, img_seq=None, text_pooled=None, labs=None):
-        text_vector = self.text_proj(text_pooled)
+    def forward(self, img_seq=None, text_pooled=None, labs=None, **kwargs):
+        text_vector = self.text_norm(self.text_proj(text_pooled))
         text_vector = self.dropout(text_vector)
         return self.classifier(text_vector)
 
 
 class VisionTextHead(nn.Module):
-    """Your original architecture (before the labs branch was added):
-    text as cross-attention Query, image patches as Key/Value."""
     def __init__(self, img_hidden_size, text_hidden_size, embed_dim=EMBED_DIM, dropout=0.3):
         super().__init__()
         self.img_proj = nn.Linear(img_hidden_size, embed_dim)
         self.text_proj = nn.Linear(text_hidden_size, embed_dim)
+
+        self.img_norm = nn.LayerNorm(embed_dim)
+        self.text_norm = nn.LayerNorm(embed_dim)
+
         self.fusion = nn.MultiheadAttention(embed_dim, num_heads=8, batch_first=True)
         self.norm = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(embed_dim, 1)
 
-    def forward(self, img_seq, text_pooled, labs=None):
-        img_vector = self.img_proj(img_seq)
-        text_vector = self.text_proj(text_pooled)
+    def forward(self, img_seq, text_pooled, labs=None, **kwargs):
+        img_vector = self.img_norm(self.img_proj(img_seq))
+        text_vector = self.text_norm(self.text_proj(text_pooled))
 
+        if self.training and torch.rand(1).item() < 0.15:
+            img_vector = torch.zeros_like(img_vector)
+
+        img_token = img_vector.mean(dim=1, keepdim=True)
         query = text_vector.unsqueeze(1)
-        attn_out, _ = self.fusion(query, img_vector, img_vector)
+
+        attn_out, _ = self.fusion(query, img_token, img_token)
         fused = self.norm(attn_out.squeeze(1) + text_vector)
         fused = self.dropout(fused)
         return self.classifier(fused)
 
 
 class VisionTextLabsHead(nn.Module):
-    """The 'Proposed' architecture -- matches your current MultimodalSystem
-    exactly, just operating on cached embeddings instead of raw inputs."""
+    """Sequence-based Cross-Attention Fusion (Option B).
+    Text acts as Query over [Vision Token, Lab Token] Key/Value sequence.
+    """
     def __init__(self, img_hidden_size, text_hidden_size, embed_dim=EMBED_DIM, dropout=0.3):
         super().__init__()
         self.img_proj = nn.Linear(img_hidden_size, embed_dim)
@@ -159,35 +150,65 @@ class VisionTextLabsHead(nn.Module):
         )
         self.lab_proj = nn.Linear(32, embed_dim)
 
+        self.img_norm = nn.LayerNorm(embed_dim)
+        self.text_norm = nn.LayerNorm(embed_dim)
+        self.lab_norm = nn.LayerNorm(embed_dim)
+
+        self.modality_dropout = nn.Dropout(p=0.15)
+
         self.fusion = nn.MultiheadAttention(embed_dim, num_heads=8, batch_first=True)
         self.norm = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(embed_dim, 1)
 
-    def forward(self, img_seq, text_pooled, labs):
-        img_vector = self.img_proj(img_seq)
-        text_vector = self.text_proj(text_pooled)
+    def forward(self, img_seq, text_pooled, labs, return_visuals=False):
+      img_vector = self.img_norm(self.img_proj(img_seq))
+      text_vector = self.text_norm(self.text_proj(text_pooled))
 
-        labs_formatted = labs.unsqueeze(1)  # [B, 1, 2]
-        lab_features = self.lab_cnn(labs_formatted).squeeze(-1)  # [B, 32]
-        lab_vector = self.lab_proj(lab_features)  # [B, embed_dim]
-        lab_token = lab_vector.unsqueeze(1)  # [B, 1, embed_dim]
+      labs_formatted = labs.unsqueeze(1)
+      lab_features = self.lab_cnn(labs_formatted).squeeze(-1)
+      lab_vector = self.lab_norm(self.lab_proj(lab_features))
 
-        kv_combined = torch.cat([img_vector, lab_token], dim=1)  # [B, num_patches+1, embed_dim]
+      # Token representations [B, 1, 512]
+      img_token = img_vector.mean(dim=1, keepdim=True)
+      lab_token = lab_vector.unsqueeze(1)
 
-        query = text_vector.unsqueeze(1)
-        attn_out, attn_weights = self.fusion(query, kv_combined, kv_combined)
-        fused = self.norm(attn_out.squeeze(1) + text_vector)
-        fused = self.dropout(fused)
-        return self.classifier(fused)
+      if self.training:
+        img_token = self.modality_dropout(img_token)
+
+      # Key/Value sequence creation -> [B, 2, 512]
+      kv_sequence = torch.cat([img_token, lab_token], dim=1)
+
+      # Query definition -> [B, 1, 512]
+      query = text_vector.unsqueeze(1)
+
+      # Cross-Attention over Key/Value sequence
+      # need_weights=True returns raw attention matrix [B, 1, 2]
+      attn_out, attn_weights = self.fusion(
+          query,
+          kv_sequence,
+          kv_sequence,
+          need_weights=True,
+          average_attn_weights=True,
+      )
+
+      fused = self.norm(attn_out.squeeze(1) + text_vector)
+      fused = self.dropout(fused)
+      logits = self.classifier(fused)
+
+      if return_visuals:
+        # Extract weights across batch -> [B, 2]
+        return logits, attn_weights.squeeze(1)
+
+      return logits
 
 
 # ---------------------------------------------------------------------------
-# 3. Generic train + evaluate loop for any head
+# 3. Training and Evaluation Loops
 # ---------------------------------------------------------------------------
 def train_head(head, train_loader, device, num_epochs=NUM_EPOCHS, lr=1e-3):
     head.to(device)
-    optimiser = torch.optim.Adam(head.parameters(), lr=lr)
+    optimiser = torch.optim.AdamW(head.parameters(), lr=lr, weight_decay=1e-2)
     criterion = nn.BCEWithLogitsLoss()
 
     head.train()
@@ -227,16 +248,91 @@ def evaluate_head(head, test_loader, device):
 
 
 # ---------------------------------------------------------------------------
-# 4. Run all 4 conditions and produce comparison outputs
+# 4. Extract and Plot Sequence Cross-Attention Weights
+# ---------------------------------------------------------------------------
+def visualize_modality_dynamics(proposed_head, test_loader, device):
+    """Extracts and visualizes cross-attention weights across Vision and Labs."""
+    proposed_head.eval()
+    proposed_head.to(device)
+
+    all_attn_weights = []
+    all_labels = []
+
+    with torch.no_grad():
+        for img_seq, text_pooled, labs, labels in test_loader:
+            img_seq = img_seq.to(device)
+            text_pooled = text_pooled.to(device)
+            labs = labs.to(device)
+
+            _, attn_weights = proposed_head(img_seq, text_pooled, labs, return_visuals=True)
+
+            all_attn_weights.append(attn_weights.cpu().numpy())
+            all_labels.extend(labels.numpy().flatten())
+
+    all_attn_weights = np.vstack(all_attn_weights)  # [N_samples, 2]
+    all_labels = np.array(all_labels)
+
+    vision_weights = all_attn_weights[:, 0]
+    lab_weights = all_attn_weights[:, 1]
+
+    print("\n" + "=" * 60)
+    print("MODALITY CROSS-ATTENTION ANALYSIS (Test Set)")
+    print("=" * 60)
+    print(f"Mean Text-to-Vision Attention: {np.mean(vision_weights) * 100:.2f}%")
+    print(f"Mean Text-to-Lab Attention:    {np.mean(lab_weights) * 100:.2f}%")
+
+    norm_mask = all_labels == 0
+    pneu_mask = all_labels == 1
+    print(f"  - Normal Cases -> Vision: {np.mean(vision_weights[norm_mask]) * 100:.2f}% | Labs: {np.mean(lab_weights[norm_mask]) * 100:.2f}%")
+    print(f"  - Pneumonia Cases -> Vision: {np.mean(vision_weights[pneu_mask]) * 100:.2f}% | Labs: {np.mean(lab_weights[pneu_mask]) * 100:.2f}%")
+
+    # Plot 1: Overall Cross-Attention Weight Distribution
+    plt.figure(figsize=(8, 5))
+    sns.kdeplot(vision_weights, label="Vision Token Attention Weight", fill=True, alpha=0.4, color="royalblue")
+    sns.kdeplot(lab_weights, label="Lab Token Attention Weight", fill=True, alpha=0.4, color="crimson")
+    plt.title("Sequence Cross-Attention Weight Distribution")
+    plt.xlabel("Attention Weight Score (0.0 to 1.0)")
+    plt.ylabel("Density")
+    plt.legend(loc="upper center")
+    plt.tight_layout()
+    plt.savefig(f"{OUTPUT_DIR}/sequence_attention_distribution.png", dpi=150)
+    plt.close()
+
+    # Plot 2: Class-wise Lab Attention Weight (Fixed Seaborn deprecation)
+    df_attn = pd.DataFrame({
+        "Vision Weight": vision_weights,
+        "Lab Weight": lab_weights,
+        "Diagnosis": ["Normal" if l == 0 else "Pneumonia" for l in all_labels]
+    })
+
+    plt.figure(figsize=(7, 5))
+    sns.boxplot(
+        x="Diagnosis",
+        y="Lab Weight",
+        hue="Diagnosis",
+        data=df_attn,
+        palette=["mediumseagreen", "indianred"],
+        legend=False,
+    )
+    plt.title("Laboratory Token Cross-Attention Score by Diagnosis Class")
+    plt.ylabel("Learned Cross-Attention Weight")
+    plt.tight_layout()
+    plt.savefig(f"{OUTPUT_DIR}/lab_attention_by_class.png", dpi=150)
+    plt.close()
+
+    print(f"Modality visualization plots saved to ./{OUTPUT_DIR}/")
+
+
+# ---------------------------------------------------------------------------
+# 5. Main Execution
 # ---------------------------------------------------------------------------
 def run_ablation_study(train_loader_raw, test_loader_raw, device):
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # Load a MultimodalSystem purely to get the frozen encoders for embedding extraction
     print("Loading frozen encoders for embedding extraction...")
     encoder_model = MultimodalSystem(freeze_encoders=True).to(device)
 
-    print("Extracting train embeddings (runs SwinV2/ClinicalBERT once)...")
+    print("Extracting train embeddings...")
     train_img, train_text, train_labs, train_labels = extract_embeddings(encoder_model, train_loader_raw, device)
     print("Extracting test embeddings...")
     test_img, test_text, test_labs, test_labels = extract_embeddings(encoder_model, test_loader_raw, device)
@@ -257,20 +353,20 @@ def run_ablation_study(train_loader_raw, test_loader_raw, device):
     }
 
     results = {}
+    trained_heads = {}
 
     for name, head in conditions.items():
         print(f"\n{'=' * 60}\nTraining condition: {name}\n{'=' * 60}")
         head = train_head(head, train_loader, device)
         probs, preds, labels = evaluate_head(head, test_loader, device)
+        trained_heads[name] = head
 
-        # Classification report
         report = classification_report(labels, preds, target_names=["Normal", "Pneumonia"], digits=4)
         print(report)
         safe_name = name.replace(" ", "_").replace("(", "").replace(")", "").replace("+", "and")
         with open(f"{OUTPUT_DIR}/{safe_name}_classification_report.txt", "w") as f:
             f.write(report)
 
-        # Confusion matrix
         cm = confusion_matrix(labels, preds)
         plt.figure(figsize=(5, 4))
         sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False,
@@ -282,7 +378,6 @@ def run_ablation_study(train_loader_raw, test_loader_raw, device):
         plt.savefig(f"{OUTPUT_DIR}/{safe_name}_confusion_matrix.png", dpi=150)
         plt.close()
 
-        # Store summary metrics for the combined comparison plots
         acc = accuracy_score(labels, preds)
         precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average="macro", zero_division=0)
         fpr, tpr, _ = roc_curve(labels, probs)
@@ -293,7 +388,7 @@ def run_ablation_study(train_loader_raw, test_loader_raw, device):
             "auc": roc_auc, "fpr": fpr, "tpr": tpr,
         }
 
-    # --- Combined bar chart: Accuracy/Precision/Recall/F1 across all 4 conditions --
+    # Plot metrics comparison bar chart
     metrics_df = pd.DataFrame({
         name: {k: v for k, v in r.items() if k in ("accuracy", "precision", "recall", "f1")}
         for name, r in results.items()
@@ -307,9 +402,8 @@ def run_ablation_study(train_loader_raw, test_loader_raw, device):
     plt.tight_layout()
     plt.savefig(f"{OUTPUT_DIR}/combined_metrics_bar_chart.png", dpi=150)
     plt.close()
-    print(f"\nCombined bar chart saved to {OUTPUT_DIR}/combined_metrics_bar_chart.png")
 
-    # --- Combined ROC curve: one line per condition ------------------------------
+    # Plot ROC curves
     plt.figure(figsize=(7, 6))
     for name, r in results.items():
         plt.plot(r["fpr"], r["tpr"], label=f"{name} (AUC = {r['auc']:.3f})")
@@ -321,20 +415,18 @@ def run_ablation_study(train_loader_raw, test_loader_raw, device):
     plt.tight_layout()
     plt.savefig(f"{OUTPUT_DIR}/combined_roc_curves.png", dpi=150)
     plt.close()
-    print(f"Combined ROC curve saved to {OUTPUT_DIR}/combined_roc_curves.png")
 
-    print(f"\nAll per-condition reports/confusion matrices saved to ./{OUTPUT_DIR}/")
+    # Run visualization extraction on proposed model
+    visualize_modality_dynamics(trained_heads["Vision + Text + Labs (Proposed)"], test_loader, device)
+
     return results
 
 
 if __name__ == "__main__":
-    from datasets import load_from_disk
-
-    # Same dataset path/format as model_training.py -- adjust here if yours differs
     DATASET_PATH = "/Users/mickman/Documents/programs/PulmoNetAI/data/ds_full_processed"
 
     if not os.path.exists(DATASET_PATH):
-        raise FileNotFoundError(f"Processed dataset not found at {DATASET_PATH}. Run your pipeline first.")
+        raise FileNotFoundError(f"Processed dataset not found at {DATASET_PATH}.")
 
     if torch.backends.mps.is_available():
         device = torch.device("mps")
@@ -344,7 +436,6 @@ if __name__ == "__main__":
         device = torch.device("cpu")
     print(f"Using device: {device}")
 
-    print("Loading processed dataset...")
     dataset = load_from_disk(DATASET_PATH)
 
     split_ds = dataset.train_test_split(test_size=0.2, seed=42)
@@ -354,8 +445,6 @@ if __name__ == "__main__":
     columns_to_load = ["pixel_values", "input_ids", "attention_mask", "labels", "wbc", "crp"]
     train_ds.set_format(type="torch", columns=columns_to_load)
     test_ds.set_format(type="torch", columns=columns_to_load)
-
-    print(f"Train samples: {len(train_ds)} | Test samples: {len(test_ds)}")
 
     train_loader_raw = DataLoader(train_ds, batch_size=16, shuffle=True, num_workers=0)
     test_loader_raw = DataLoader(test_ds, batch_size=16, shuffle=False, num_workers=0)

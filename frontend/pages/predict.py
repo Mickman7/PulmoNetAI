@@ -2,6 +2,9 @@ import streamlit as st
 
 from api_client import search_patients, run_prediction
 from file_parsing import extract_text, parse_labs
+from vitals_utils import generate_vitals_template, parse_vitals_csv
+
+st.set_page_config(layout="wide")
 
 st.title("Predict")
 
@@ -57,8 +60,34 @@ else:
         if parsed_wbc is None or parsed_crp is None:
             st.info("Couldn't auto-detect WBC/CRP from the file -- please check the values above.")
 
-# --- 4. Predict ----------------------------------------------------------
-st.header("4. Prediction")
+# --- 4. Vitals (optional) ---------------------------------------------------
+st.header("4. Vitals (Optional)")
+st.caption(
+    "24-hour hourly readings. If not provided, the model treats vitals as "
+    "unavailable rather than guessing -- this doesn't hurt the prediction, "
+    "it just means that signal isn't used."
+)
+
+col_a, col_b = st.columns([1, 2])
+with col_a:
+    st.download_button(
+        "Download CSV Template",
+        data=generate_vitals_template(),
+        file_name="vitals_template.csv",
+        mime="text/csv",
+    )
+
+vitals_file = st.file_uploader("Upload vitals CSV", type=["csv"])
+vitals_data = None
+if vitals_file:
+    try:
+        vitals_data = parse_vitals_csv(vitals_file)
+        st.success(f"Vitals loaded: {len(vitals_data)} hourly readings.")
+    except ValueError as e:
+        st.error(f"Invalid vitals CSV: {e}")
+
+# --- 5. Predict ----------------------------------------------------------
+st.header("5. Prediction")
 if st.button("Predict", type="primary"):
     if selected_patient is None:
         st.error("Please select a patient.")
@@ -76,12 +105,19 @@ if st.button("Predict", type="primary"):
                     notes=notes,
                     wbc=wbc,
                     crp=crp,
+                    vitals=vitals_data,
                 )
                 st.subheader("Result")
                 col1, col2 = st.columns(2)
                 col1.metric("Prediction", result["label"])
                 col2.metric("Probability", f"{result['probability']:.1%}")
                 st.progress(result["probability"])
+
+                if vitals_data is not None:
+                    st.caption("Prediction used your uploaded vitals.")
+                else:
+                    st.caption("Prediction did not include vitals (none provided).")
+
                 st.caption("Saved to patient's record.")
             except Exception as e:
                 st.error(f"Prediction failed: {e}")

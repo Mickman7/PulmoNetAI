@@ -34,13 +34,14 @@ class Patient(Base):
 class Prediction(Base):
     __tablename__ = "predictions"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_order=True, primary_key=True, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
 
     image_path = Column(String, nullable=False)
     notes = Column(Text, nullable=True)
     wbc = Column(Float, nullable=True)
     crp = Column(Float, nullable=True)
+    attention_summary = Column(String, nullable=True)
 
     probability = Column(Float, nullable=False)
     label = Column(String, nullable=False)
