@@ -22,14 +22,14 @@ parser.add_argument(
     "--lrs",
     nargs="+",
     type=float,
-    default=[1e-5, 3e-5],
+    default=[1e-3, 1e-5, 2e-5, 3e-5],
     help="List of learning rates to evaluate",
 )
 parser.add_argument(
     "--dropouts",
     nargs="+",
     type=float,
-    default=[0.3, 0.5],
+    default=[0.2, 0.3, 0.5],
     help="List of dropout probabilities to evaluate",
 )
 parser.add_argument(

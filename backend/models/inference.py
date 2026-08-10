@@ -65,7 +65,7 @@ def predict(image_path: str, notes: str, wbc: float, crp: float, vitals=None) ->
             images=pixel_values,
             text_input=text_inputs,
             labs_tensor=labs_tensor,
-            vitals_tensor=vitals_tensor,  # None is safe now -- handled inside forward()
+            vitals_tensor=vitals_tensor,  
             return_attention=True,
         )
         probability = torch.sigmoid(logits).item()
