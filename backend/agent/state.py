@@ -16,6 +16,7 @@ class PredictionRecord(TypedDict):
 class AgentState(TypedDict):
     patient_summary: str              # structured medical history, rendered as text
     records: List[PredictionRecord]   # clinician-selected predictions, oldest -> newest
+    guideline_context: Optional[str]
     analysis: Optional[str]
     reasoning: Optional[str]
     report: Optional[str]

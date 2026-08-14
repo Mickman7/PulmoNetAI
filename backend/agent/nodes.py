@@ -8,6 +8,7 @@ import os
 
 from langchain_openai import ChatOpenAI
 from .state import AgentState
+from .rag import build_retrieval_query, retrieve_context
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)  # low temp -> deterministic, less hallucination
 
@@ -36,6 +37,17 @@ def _render_records(records) -> str:
             f"Vitals: {vitals_line}."
         )
     return "\n".join(lines)
+
+
+def retrieval_node(state: AgentState) -> AgentState:
+    """Deterministic retrieval node: constructs a query directly from patient evidence
+    and fetches context from the persisted vector store."""
+    records_block = _render_records(state["records"])
+    patient_summary = state["patient_summary"]
+
+    query = build_retrieval_query(patient_summary, records_block)
+    state["guideline_context"] = retrieve_context(query, k=4)
+    return state
 
 
 def analysis_node(state: AgentState) -> AgentState:
@@ -115,3 +127,6 @@ def report_node(state: AgentState) -> AgentState:
 
     state["report"] = llm.invoke(prompt).content
     return state
+
+
+    
