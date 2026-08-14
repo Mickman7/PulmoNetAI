@@ -15,6 +15,7 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)  # low temp -> deterministi
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "report_template.txt")
 
 
+
 def _load_report_template() -> str:
     """Read fresh from disk each call (not cached at import) so the template
     can be edited without restarting the server."""
@@ -39,18 +40,25 @@ def _render_records(records) -> str:
     return "\n".join(lines)
 
 
-def retrieval_node(state: AgentState) -> AgentState:
-    """Deterministic retrieval node: constructs a query directly from patient evidence
-    and fetches context from the persisted vector store."""
+def retrieval_node(state: AgentState) -> dict:
     records_block = _render_records(state["records"])
     patient_summary = state["patient_summary"]
 
     query = build_retrieval_query(patient_summary, records_block)
-    state["guideline_context"] = retrieve_context(query, k=4)
-    return state
+    context = retrieve_context(query, k=4)
+
+    # Visual terminal indicator
+    print("\n" + "=" * 60)
+    print(" [RAG PIPELINE EXECUTED]")
+    print(f" Query: {query[:100]}...")
+    print(f" Context Retrieved: {len(context)} characters")
+    print("=" * 60 + "\n")
+    
+    # Return ONLY the key updated in this node
+    return {"guideline_context": context}
 
 
-def analysis_node(state: AgentState) -> AgentState:
+def analysis_node(state: AgentState) -> dict:
     records_block = _render_records(state["records"])
     patient_summary = state["patient_summary"]
 
@@ -69,39 +77,49 @@ def analysis_node(state: AgentState) -> AgentState:
 
         In 3-4 sentences, describe how the image attention focus and the clinical/lab data interact to drive these results, noting where available vitals corroborate that picture. If multiple records are present, explain the changes based purely on differing feature inputs between independent encounters without implying the model tracks a temporal trend. Use only the information above."""
 
-    state["analysis"] = llm.invoke(prompt).content
-    return state
+    analysis_res = llm.invoke(prompt).content
+    
+    # Return ONLY the key updated in this node
+    return {"analysis": analysis_res}
 
 
-def reasoning_node(state: AgentState) -> AgentState:
+def reasoning_node(state: AgentState) -> dict:
     records_block = _render_records(state["records"])
     patient_summary = state["patient_summary"]
+    guidelines = state.get("guideline_context", "No guidelines provided.")
 
     prompt = f"""Check the following predictions for internal consistency against standard
-        lab reference ranges (WBC normal ~4.5-11.0 x10^9/L, CRP normal <10 mg/L) and, where available,
-        typical vitals ranges (resting HR ~60-100 bpm, RR ~12-20 breaths/min, SpO2 ~95-100%).
+        lab reference ranges (WBC normal ~4.5-11.0 x10^9/L, CRP normal <10 mg/L), typical vitals ranges
+        (resting HR ~60-100 bpm, RR ~12-20 breaths/min, SpO2 ~95-100%), and the retrieved clinical guidelines below.
 
         CRITICAL CLINICAL RULES:
         1. Elevated WBC and CRP indicate systemic inflammation but do not automatically guarantee localized pneumonia.
         2. If labs are highly elevated but the model predicts 'Normal', this is a clinically valid cross-modal override. It means the chest X-ray showed clear lung fields, which correctly overrode the non-specific blood markers. Do NOT flag this as a model error or contradiction.
         3. Vitals are supporting evidence only. If vitals are available and align with the prediction (e.g. low SpO2 / elevated RR alongside a Pneumonia prediction), note this as corroboration. If vitals are available but appear to conflict with the prediction, note it as a soft observation worth clinical attention — NOT as grounds to override or contradict the image+lab-driven result, since vitals were never the deciding input. If vitals are marked "Not provided", do not treat their absence as a red flag or evidence of anything.
+        4. Cross-reference the patient's presentation against the retrieved clinical guidelines to justify or challenge the model's output.
+
+        Retrieved Clinical Guidelines:
+        {guidelines}
 
         Patient history: {patient_summary}
 
         Selected records:
         {records_block}
 
-        In 3-4 sentences, evaluate whether the combination of lab values, image attention focus, and (where available) vitals supports the clinical validity of each independent prediction. Only flag a record as inconsistent if the model's prediction directly contradicts both the image attention behavior and the clinical context provided. Do not invent information."""
+        In 3-4 sentences, evaluate whether the combination of lab values, image attention focus, available vitals, and retrieved guidelines supports the clinical validity of each independent prediction. Only flag a record as inconsistent if the model's prediction directly contradicts both the image attention behavior and the clinical context provided. Do not invent information."""
 
-    state["reasoning"] = llm.invoke(prompt).content
-    return state
+    reasoning_res = llm.invoke(prompt).content
+    
+    # Return ONLY the key updated in this node
+    return {"reasoning": reasoning_res}
 
 
-def report_node(state: AgentState) -> AgentState:
+def report_node(state: AgentState) -> dict:
     patient_summary = state["patient_summary"]
     records_block = _render_records(state["records"])
     analysis = state["analysis"]
     reasoning = state["reasoning"]
+    guidelines = state.get("guideline_context", "No guidelines provided.")
     template = _load_report_template()
 
     prompt = f"""You are a clinical reporting assistant. Generate a Respiratory Consultation
@@ -113,6 +131,7 @@ def report_node(state: AgentState) -> AgentState:
         - Use explicit, objective language in the active voice.
         - Do not add conversational text, preambles, or metadata outside the structured report.
         - For any field the source information does not cover, write exactly: Not available/Not assessed. Never estimate or invent a value.
+        - Explicitly reference retrieved guideline sources (e.g. [Source: NG250]) when justifying clinical recommendations.
 
         {template}
 
@@ -122,11 +141,13 @@ def report_node(state: AgentState) -> AgentState:
         Selected records (oldest to newest):
         {records_block}
 
+        Retrieved Guidelines:
+        {guidelines}
+
         Modality Analysis: {analysis}
         Consistency Check: {reasoning}"""
 
-    state["report"] = llm.invoke(prompt).content
-    return state
-
-
+    report_res = llm.invoke(prompt).content
     
+    # Return ONLY the key updated in this node
+    return {"report": report_res}

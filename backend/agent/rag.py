@@ -17,44 +17,70 @@ import os
 
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
+from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-CORPUS_DIR = os.path.join(os.path.dirname(__file__), "rag_corpus")
+RAG_FILES_DIR = os.path.join(os.path.dirname(__file__), "rag_files")
 PERSIST_DIR = os.path.join(os.path.dirname(__file__), "chroma_db")
 
 _vector_store = None  # module-level cache so we don't reload from disk every call
 
+from dotenv import load_dotenv
+load_dotenv()
+
 
 def build_vector_store():
-    """Run this once (or whenever you add/change files in rag_corpus/) to
-    (re)build the persisted vector store. Chunks each .txt file in the corpus
-    directory, embeds them, and writes to disk at PERSIST_DIR."""
+    """Builds a persisted Chroma vector store using both .txt and .pdf files 
+    found in the RAG_FILES_DIR."""
+    
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,       # characters per chunk -- small enough for precise retrieval,
-        chunk_overlap=100,    # large enough to keep a recommendation + its context together
+        chunk_size=800,
+        chunk_overlap=100,
         separators=["\n\n", "\n", ". ", " "],
     )
 
-    texts, metadatas = [], []
-    for filename in os.listdir(CORPUS_DIR):
-        if not filename.endswith(".txt"):
-            continue
-        filepath = os.path.join(CORPUS_DIR, filename)
-        with open(filepath, "r") as f:
-            content = f.read()
-        chunks = splitter.split_text(content)
-        texts.extend(chunks)
-        metadatas.extend([{"source": filename}] * len(chunks))
+    documents = []
 
-    if not texts:
-        raise ValueError(f"No .txt files found in {CORPUS_DIR} -- add your guideline corpus first.")
+    # 1. Load PDF files using PyPDFDirectoryLoader
+    if os.path.exists(RAG_FILES_DIR):
+        pdf_loader = PyPDFDirectoryLoader(RAG_FILES_DIR)
+        loaded_pdfs = pdf_loader.load()
+        if loaded_pdfs:
+            # Standardize metadata source tag to filename only
+            for doc in loaded_pdfs:
+                doc.metadata["source"] = os.path.basename(doc.metadata.get("source", ""))
+            documents.extend(loaded_pdfs)
 
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")  # cheap, good enough for this corpus size
-    store = Chroma.from_texts(
-        texts=texts, embedding=embeddings, metadatas=metadatas, persist_directory=PERSIST_DIR
+    # 2. Load TXT files
+    for filename in os.listdir(RAG_FILES_DIR):
+        if filename.endswith(".txt"):
+            filepath = os.path.join(RAG_FILES_DIR, filename)
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+            # Wrap as a Document object matching PyPDF output
+            from langchain_core.documents import Document
+            documents.append(Document(page_content=content, metadata={"source": filename}))
+
+    if not documents:
+        raise ValueError(
+            f"No .pdf or .txt files found in {RAG_FILES_DIR} -- add your guideline corpus first."
+        )
+
+    # Split documents (PDFs + TXTs) into chunks
+    doc_chunks = splitter.split_documents(documents)
+
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    store = Chroma.from_documents(
+        documents=doc_chunks,
+        embedding=embeddings,
+        persist_directory=PERSIST_DIR,
     )
-    print(f"Vector store built: {len(texts)} chunks from {len(set(m['source'] for m in metadatas))} file(s), "
-          f"saved to {PERSIST_DIR}")
+
+    sources = set(doc.metadata.get("source", "unknown") for doc in doc_chunks)
+    print(
+        f"Vector store built: {len(doc_chunks)} chunks from {len(sources)} file(s), "
+        f"saved to {PERSIST_DIR}"
+    )
     return store
 
 
