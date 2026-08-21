@@ -42,7 +42,8 @@ class MultimodalSystem(nn.Module):
         )
         self.vitals_proj = nn.Linear(32, embed_dim)
 
-        self.self_attention = nn.MultiheadAttention(embed_dim, num_heads=8, batch_first=True)
+        # Renamed self_attention to fusion to match state_dict keys
+        self.fusion = nn.MultiheadAttention(embed_dim, num_heads=8, batch_first=True)
         self.norm = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(embed_dim, 1)
@@ -51,7 +52,9 @@ class MultimodalSystem(nn.Module):
         batch_size = images.size(0)
 
         img_features = self.image_encoder(images).last_hidden_state
-        img_vector = self.img_proj(img_features)
+        # Pool spatial tokens to a single image token
+        img_features = img_features.mean(dim=1)
+        img_vector = self.img_proj(img_features).unsqueeze(1)
 
         text_features = self.text_encoder(**text_input).pooler_output
         text_vector = self.text_proj(text_features).unsqueeze(1)
@@ -70,7 +73,8 @@ class MultimodalSystem(nn.Module):
 
         joint_sequence = torch.cat([img_vector, text_vector, lab_token, vitals_token], dim=1)
 
-        attn_out, attn_weights = self.self_attention(
+        # Pass through self.fusion to match checkpoint state_dict
+        attn_out, attn_weights = self.fusion(
             joint_sequence, joint_sequence, joint_sequence, need_weights=True
         )
 

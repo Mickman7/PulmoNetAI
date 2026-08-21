@@ -31,7 +31,7 @@ with st.form("create_patient_form"):
         cancelled = st.form_submit_button("Cancel")
 
 if cancelled:
-    st.switch_page("pages/1_Patients.py")  # <-- rename to match your actual filename
+    st.switch_page("pages/patients.py") 
 
 if submitted:
     if not name.strip():
@@ -56,6 +56,6 @@ if submitted:
         try:
             patient = create_patient(payload)
             st.success(f"Patient created: {patient['name']} (ID: {patient['id']})")
-            st.switch_page("pages/1_Patients.py")  # <-- rename to match your actual filename
+            st.switch_page("pages/patients.py")  
         except Exception as e:
             st.error(f"Failed to create patient: {e}")

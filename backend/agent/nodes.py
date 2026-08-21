@@ -9,6 +9,7 @@ import os
 from langchain_openai import ChatOpenAI
 from .state import AgentState
 from .rag import build_retrieval_query, retrieve_context
+from backend.models.gradcam import SwinGradCAM, overlay_heatmap
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)  # low temp -> deterministic, less hallucination
 
@@ -151,3 +152,34 @@ def report_node(state: AgentState) -> dict:
     
     # Return ONLY the key updated in this node
     return {"report": report_res}
+
+
+def image_analysis_node(state):
+    """
+    LangGraph node responsible for running vision inference and generating
+    visual explainability heatmaps via Grad-CAM.
+    """
+    image_data = state["image_tensor"]
+    text_data = state["text_tensor"]
+    lab_data = state["lab_tensor"]
+    
+    # Initialize Grad-CAM on Swin backbone's final stage
+    target_layer = model.swin_backbone.layers[-1]
+    grad_cam = SwinGradCAM(model, target_layer)
+    
+    # Generate heatmap
+    heatmap, predicted_class = grad_cam.generate_heatmap(image_data, text_data, lab_data)
+    
+    # Render overlay image for frontend display / report generation
+    original_img = state["raw_image_np"]
+    overlaid_img, norm_heatmap = overlay_heatmap(heatmap, original_img)
+    
+    # Save results to agent state for downstream reasoning and report nodes
+    state["prediction"] = predicted_class
+    state["visual_explanation"] = {
+        "heatmap": norm_heatmap,
+        "overlay_image": overlaid_img,
+        "explanation_summary": f"Grad-CAM highlighted high-activation regions driving class {predicted_class}."
+    }
+    
+    return state

@@ -12,7 +12,7 @@ def build_agent():
     graph.add_node("report", report_node)
 
     graph.set_entry_point("retrieval")
-    graph.set_entry_point("analysis")
+    graph.add_edge("retrieval", "analysis")
     graph.add_edge("analysis", "reasoning")
     graph.add_edge("reasoning", "report")
     graph.add_edge("report", END)

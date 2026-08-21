@@ -37,6 +37,12 @@ def create_patient(payload: dict) -> dict:
     r.raise_for_status()
     return r.json()
 
+def delete_patient(patient_id: int):
+    response = requests.delete(f"{API_BASE_URL}/patients/{patient_id}")
+    if response.status_code != 200:
+        raise Exception(f"API Error ({response.status_code}): {response.text}")
+    return response.json()
+
 
 def get_patient_predictions(patient_id: int) -> list[dict]:
     r = requests.get(f"{API_BASE_URL}/patients/{patient_id}/predictions")

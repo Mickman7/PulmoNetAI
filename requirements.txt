@@ -27,3 +27,4 @@ torchvision
 transformers
 uvicorn[standard]
 chromadb
+pytest

@@ -41,24 +41,20 @@ def update_patient(db: Session, patient_id: int, data: dict) -> models.Patient |
     return patient
 
 
-def delete_patient(db: Session, patient_id: int) -> None:
-    patient = get_patient(db, patient_id)
+def delete_patient(db: Session, patient_id: int):
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
     if not patient:
-        return
+        return False
 
-    has_predictions = db.query(models.Prediction).filter(models.Prediction.patient_id == patient_id).first()
-    has_reports = db.query(models.Report).filter(models.Report.patient_id == patient_id).first()
-    has_encounters = db.query(models.ClinicalEncounter).filter(models.ClinicalEncounter.patient_id == patient_id).first()
-    has_appointments = db.query(models.Appointment).filter(models.Appointment.patient_id == patient_id).first()
-    has_treatments = db.query(models.Treatment).filter(models.Treatment.patient_id == patient_id).first()
-
-    if any([has_predictions, has_reports, has_encounters, has_appointments, has_treatments]):
-        raise PatientHasRecordsError(
-            f"Cannot delete patient {patient_id}: existing clinical records must be removed first."
-        )
+    # Remove linked records for models defined in models.py
+    db.query(models.Prediction).filter(models.Prediction.patient_id == patient_id).delete()
+    db.query(models.Report).filter(models.Report.patient_id == patient_id).delete()
+    db.query(models.Appointment).filter(models.Appointment.patient_id == patient_id).delete()
+    db.query(models.Treatment).filter(models.Treatment.patient_id == patient_id).delete()
 
     db.delete(patient)
     db.commit()
+    return True
 
 
 # ---------------------------------------------------------------------------

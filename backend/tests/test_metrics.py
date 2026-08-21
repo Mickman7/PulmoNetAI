@@ -1,40 +1,53 @@
 from unittest.mock import patch
-import nltk
 from datasets import load_dataset
-from langchain_core.messages import AIMessage
-from langchain_openai import ChatOpenAI
-from nltk.tokenize import word_tokenize
-from nltk.translate.meteor_score import meteor_score
 import pytest
-from rouge_score import rouge_scorer
+import spacy
 
 from backend.agent.graph import build_agent
 from backend.agent.state import AgentState
 
-
-# Ensure required NLTK resources are available
-def setup_module():
-    nltk.download("wordnet", quiet=True)
-    nltk.download("punkt", quiet=True)
-    nltk.download("punkt_tab", quiet=True)
+# Load the biomedical NLP pipeline globally
+nlp = spacy.load("en_core_sci_sm")
 
 
-def compute_metrics(generated_text: str, reference_text: str) -> dict:
-    """Computes ROUGE-1, ROUGE-2, ROUGE-L, and METEOR scores."""
-    scorer = rouge_scorer.RougeScorer(
-        ["rouge1", "rouge2", "rougeL"], use_stemmer=True
-    )
-    rouge_res = scorer.score(reference_text, generated_text)
+def extract_clinical_entities(text: str) -> set[str]:
+    """Extracts biomedical entities and normalises them to lower-case lemmas."""
+    doc = nlp(text)
+    entities = set()
+    for ent in doc.ents:
+        # Normalise entity tokens to base form (lemmas)
+        cleaned_entity = " ".join([token.lemma_.lower() for token in ent if not token.is_stop])
+        if len(cleaned_entity) > 2:
+            entities.add(cleaned_entity)
+    return entities
 
-    gen_tokens = word_tokenize(generated_text.lower())
-    ref_tokens = word_tokenize(reference_text.lower())
-    m_score = meteor_score([ref_tokens], gen_tokens)
+
+def compute_entity_metrics(generated_text: str, reference_text: str) -> dict[str, float]:
+    """Calculates Precision, Recall, and F1-score based on medical entity extraction."""
+    gen_entities = extract_clinical_entities(generated_text)
+    ref_entities = extract_clinical_entities(reference_text)
+
+    if not ref_entities and not gen_entities:
+        return {"precision": 1.0, "recall": 1.0, "f1": 1.0}
+    if not ref_entities or not gen_entities:
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
+
+    true_positives = len(gen_entities.intersection(ref_entities))
+    
+    precision = true_positives / len(gen_entities)
+    recall = true_positives / len(ref_entities)
+    
+    if precision + recall == 0:
+        f1 = 0.0
+    else:
+        f1 = 2 * (precision * recall) / (precision + recall)
 
     return {
-        "rouge1": rouge_res["rouge1"].fmeasure,
-        "rouge2": rouge_res["rouge2"].fmeasure,
-        "rougeL": rouge_res["rougeL"].fmeasure,
-        "meteor": m_score,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "gen_count": len(gen_entities),
+        "ref_count": len(ref_entities),
     }
 
 
@@ -43,37 +56,38 @@ def compiled_agent():
     return build_agent()
 
 
-def test_agent_pipeline_rouge_meteor_openi(compiled_agent):
-    """Evaluates the agent pipeline against OpenI ground truth clinical impressions."""
+def test_agent_pipeline_entity_evaluation_openi(compiled_agent):
+    """Evaluates the agent pipeline against OpenI ground truth clinical entities."""
     dataset = load_dataset("ykumards/open-i", split="train")
 
-    # Filter for samples containing valid impressions and findings
+    # Filter for valid OpenI records
     eval_samples = [
         s
         for s in dataset
         if s.get("impression")
         and len(s["impression"].strip()) > 10
         and s.get("findings")
-    ][:5]
+    ][:10]
 
-    r1_scores, r2_scores, rl_scores, meteor_scores = [], [], [], []
+    precision_scores, recall_scores, f1_scores = [], [], []
 
     for sample in eval_samples:
         reference_report = sample["impression"].strip()
         findings = sample.get("findings", "No detailed findings provided.")
 
+        # Dynamically pass sample findings into the initial state
         initial_state: AgentState = {
-            "patient_summary": "OpenI Benchmark Patient",
+            "patient_summary": "Arthur Pendelton | DOB: 1958-03-14 | Sex: Male | History: COPD, Type 2 Diabetes",
             "records": [
                 {
                     "created_at": "2026-08-14 12:00",
                     "probability": 0.85,
                     "label": "Pneumonia",
                     "attention_focus": findings,
-                    "notes": "Evaluation against OpenI dataset.",
-                    "wbc": 12.0,
-                    "crp": 85.0,
-                    "vitals_summary": None,
+                    "notes": f"Radiological findings: {findings}",
+                    "wbc": 14.2,
+                    "crp": 115.0,
+                    "vitals_summary": "HR: 102 bpm, BP: 118/76 mmHg, Temp: 38.4°C, RR: 24 breaths/min, SpO2: 92%",
                 }
             ],
             "guideline_context": None,
@@ -82,46 +96,36 @@ def test_agent_pipeline_rouge_meteor_openi(compiled_agent):
             "report": None,
         }
 
-        mock_responses = [
-            AIMessage(content=f"Analysis of radiological findings: {findings}"),
-            AIMessage(
-                content=f"Reasoning aligns with impression: {reference_report}"
-            ),
-            AIMessage(
-                content=f"RESPIRATORY CONSULTATION REPORT\n{reference_report}"
-            ),
-        ]
-
-        with (
-            patch("backend.agent.nodes.retrieve_context") as mock_retrieve,
-            patch.object(ChatOpenAI, "invoke", side_effect=mock_responses),
-        ):
+        # Execute agent graph with mocked retrieval
+        with patch("backend.agent.nodes.retrieve_context") as mock_retrieve:
             mock_retrieve.return_value = "NG250 guideline context excerpt..."
             final_state = compiled_agent.invoke(initial_state)
 
         generated_report = final_state["report"]
-        scores = compute_metrics(generated_report, reference_report)
 
-        r1_scores.append(scores["rouge1"])
-        r2_scores.append(scores["rouge2"])
-        rl_scores.append(scores["rougeL"])
-        meteor_scores.append(scores["meteor"])
+        # Extract impression line if structured section exists
+        if "CLINICAL INTERPRETATION:" in generated_report:
+            comparison_text = generated_report.split("CLINICAL INTERPRETATION:")[1].split("\n")[0].strip()
+        else:
+            comparison_text = generated_report
 
-    mean_r1 = sum(r1_scores) / len(r1_scores)
-    mean_r2 = sum(r2_scores) / len(r2_scores)
-    mean_rl = sum(rl_scores) / len(rl_scores)
-    mean_meteor = sum(meteor_scores) / len(meteor_scores)
+        metrics = compute_entity_metrics(comparison_text, reference_report)
+
+        precision_scores.append(metrics["precision"])
+        recall_scores.append(metrics["recall"])
+        f1_scores.append(metrics["f1"])
+
+    mean_precision = sum(precision_scores) / len(precision_scores)
+    mean_recall = sum(recall_scores) / len(recall_scores)
+    mean_f1 = sum(f1_scores) / len(f1_scores)
 
     print("\n==========================================")
-    print("      OpenI Metric Evaluation Results     ")
+    print("   OpenI Entity Metrics Evaluation Results ")
     print("==========================================")
-    print(f"Mean ROUGE-1 F1: {mean_r1:.4f}")
-    print(f"Mean ROUGE-2 F1: {mean_r2:.4f}")
-    print(f"Mean ROUGE-L F1: {mean_rl:.4f}")
-    print(f"Mean METEOR:     {mean_meteor:.4f}")
+    print(f"Mean Clinical Entity Precision: {mean_precision:.4f}")
+    print(f"Mean Clinical Entity Recall:    {mean_recall:.4f}")
+    print(f"Mean Clinical Entity F1 Score:  {mean_f1:.4f}")
     print("==========================================")
 
-    # Minimum threshold checks
-    assert mean_r1 > 0.30
-    assert mean_rl > 0.25
-    assert mean_meteor > 0.25
+    # Minimum diagnostic entity alignment check
+    assert mean_f1 > 0.20
