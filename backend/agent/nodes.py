@@ -8,7 +8,7 @@ import os
 
 from langchain_openai import ChatOpenAI
 from .state import AgentState
-from .rag import build_retrieval_query, retrieve_context
+from .rag import RAG_MODE_SOURCES, build_retrieval_query, retrieve_context
 from backend.models.gradcam import SwinGradCAM, overlay_heatmap
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)  # low temp -> deterministic, less hallucination
@@ -45,16 +45,24 @@ def retrieval_node(state: AgentState) -> dict:
     records_block = _render_records(state["records"])
     patient_summary = state["patient_summary"]
 
+    rag_mode = state.get("rag_mode") or "hybrid"
+    if rag_mode not in RAG_MODE_SOURCES:
+        raise ValueError(
+            f"Unknown rag_mode '{rag_mode}'. Expected one of {list(RAG_MODE_SOURCES)}."
+        )
+    sources = RAG_MODE_SOURCES[rag_mode]
+
     query = build_retrieval_query(patient_summary, records_block)
-    context = retrieve_context(query, k=4)
+    context = retrieve_context(query, k=4, sources=sources)
 
     # Visual terminal indicator
     print("\n" + "=" * 60)
     print(" [RAG PIPELINE EXECUTED]")
+    print(f" Mode: {rag_mode} (sources: {sources})")
     print(f" Query: {query[:100]}...")
     print(f" Context Retrieved: {len(context)} characters")
     print("=" * 60 + "\n")
-    
+
     # Return ONLY the key updated in this node
     return {"guideline_context": context}
 
@@ -89,30 +97,41 @@ def reasoning_node(state: AgentState) -> dict:
     patient_summary = state["patient_summary"]
     guidelines = state.get("guideline_context", "No guidelines provided.")
 
-    prompt = f"""Check the following predictions for internal consistency against standard
-        lab reference ranges (WBC normal ~4.5-11.0 x10^9/L, CRP normal <10 mg/L), typical vitals ranges
-        (resting HR ~60-100 bpm, RR ~12-20 breaths/min, SpO2 ~95-100%), and the retrieved clinical guidelines below.
+    prompt = """
+        Act as a Senior Consultant Respiratory Physician conducting a formal diagnostic review.
 
-        CRITICAL CLINICAL RULES:
-        1. Elevated WBC and CRP indicate systemic inflammation but do not automatically guarantee localized pneumonia.
-        2. If labs are highly elevated but the model predicts 'Normal', this is a clinically valid cross-modal override. It means the chest X-ray showed clear lung fields, which correctly overrode the non-specific blood markers. Do NOT flag this as a model error or contradiction.
-        3. Vitals are supporting evidence only. If vitals are available and align with the prediction (e.g. low SpO2 / elevated RR alongside a Pneumonia prediction), note this as corroboration. If vitals are available but appear to conflict with the prediction, note it as a soft observation worth clinical attention — NOT as grounds to override or contradict the image+lab-driven result, since vitals were never the deciding input. If vitals are marked "Not provided", do not treat their absence as a red flag or evidence of anything.
-        4. Cross-reference the patient's presentation against the retrieved clinical guidelines to justify or challenge the model's output.
+        INPUT DATA:
+        Patient Demographics & Features: {patient_data}
+        Vision Classifier Output & Visual Attention: {analysis}
+        Retrieved Guidance: {guideline_context}
 
-        Retrieved Clinical Guidelines:
-        {guidelines}
+        TASK:
+        Deliver a concise clinical synthesis evaluating the prediction. 
 
-        Patient history: {patient_summary}
+        STRICT FORMATTING RULES:
+        1. Do NOT use meta-language or planning text (e.g., "Let's assume", "Step 1", "To perform a clinical validation").
+        2. State clinical facts directly.
+        3. Quantify alignment by directly pairing patient findings with retrieved thresholds.
 
-        Selected records:
-        {records_block}
+        EXPECTED STRUCTURE:
 
-        In 3-4 sentences, evaluate whether the combination of lab values, image attention focus, available vitals, and retrieved guidelines supports the clinical validity of each independent prediction. Only flag a record as inconsistent if the model's prediction directly contradicts both the image attention behavior and the clinical context provided. Do not invent information."""
+        CLINICAL IMPRESSION & MODEL VALIDATION:
+        - State whether the model classification is valid, citing primary radiological and lab drivers.
+
+        SPECIFIC GUIDELINE MAPPING:
+        - Inflammatory Baseline: Pair patient CRP/WBC against guideline markers (e.g., NG250 CRP threshold > 100 mg/L vs patient CRP of 165 mg/L).
+        - Oxygenation & Vitals: Pair patient SpO2/vitals against guideline admission boundaries (e.g., NG250 SpO2 threshold < 92% vs patient SpO2 of 89%).
+        - Imaging Synthesis: Explain how the visual attention distribution aligns with expected radiological patterns.
+
+        MANAGEMENT RATIONALE:
+        - State the care setting escalation dictated by these threshold breaches.
+        """
 
     reasoning_res = llm.invoke(prompt).content
     
     # Return ONLY the key updated in this node
     return {"reasoning": reasoning_res}
+
 
 
 def report_node(state: AgentState) -> dict:
@@ -130,7 +149,7 @@ def report_node(state: AgentState) -> dict:
         - Follow the template's structure, section numbers, and field labels exactly -- do not add, remove, rename, or reorder sections.
         - Use British English spelling.
         - Use explicit, objective language in the active voice.
-        - Do not add conversational text, preambles, or metadata outside the structured report.
+        - Do not add conversational text, preambles, or metadata outside the structured report and retrieved source information.
         - For any field the source information does not cover, write exactly: Not available/Not assessed. Never estimate or invent a value.
         - Explicitly reference retrieved guideline sources (e.g. [Source: NG250]) when justifying clinical recommendations.
 

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -75,6 +75,7 @@ class PredictionOut(BaseModel):
 class AgentRunRequest(BaseModel):
     patient_id: int
     prediction_ids: List[int]  # which past predictions the clinician selected
+    rag_mode: Literal["local", "pubmed", "hybrid"] = "hybrid"
 
 
 class ReportOut(BaseModel):

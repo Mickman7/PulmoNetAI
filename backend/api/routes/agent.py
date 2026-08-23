@@ -48,6 +48,7 @@ def run_agent(payload: schema.AgentRunRequest, db: Session = Depends(get_db)):
     initial_state = {
         "patient_summary": build_patient_summary(patient),
         "records": records,
+        "rag_mode": payload.rag_mode,
         "analysis": None,
         "reasoning": None,
         "report": None,

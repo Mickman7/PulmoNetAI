@@ -3,6 +3,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
 
+# Use consistent absolute imports matching your project layout
 from backend.agent.graph import build_agent
 from backend.agent.state import AgentState, PredictionRecord
 
@@ -19,6 +20,7 @@ def compiled_agent():
 @pytest.fixture
 def mock_retriever():
     """Mocks the Chroma vector store search to prevent real DB/API calls during testing."""
+    # Ensure this targets the exact module where retrieve_context is invoked by your nodes
     with patch("backend.agent.nodes.retrieve_context") as mock_retrieve:
         mock_retrieve.return_value = (
             "[Guideline excerpt 1, source: NG250.pdf]\n"

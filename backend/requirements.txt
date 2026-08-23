@@ -8,5 +8,6 @@ datasets
 torch
 transformers
 scikit-learn
-langgraph 
+langgraph
 langchain-openai
+xmltodict
