@@ -29,8 +29,6 @@ backend/api/routes/__pycache__/
 .DS_Store
 backend/.DS_Store
 
-data/
-__pycache__/
-.DS_Storedata/
-__pycache__/
-.DS_Store
+
+# Stray literal $HOME dir from unexpanded shell var in a script
+$HOME/
