@@ -7,6 +7,7 @@ plus numeric wbc/crp. `vitals`, if provided, arrives as a JSON string
 """
 
 import json
+import logging
 import os
 import uuid
 
@@ -20,6 +21,7 @@ from ...models import inference
 from .. import schema
 
 router = APIRouter(prefix="/predict", tags=["predict"])
+logger = logging.getLogger(__name__)
 
 STORAGE_DIR = "backend/storage/patient_images"
 
@@ -62,4 +64,15 @@ def run_prediction(
         "probability": result["probability"],
         "label": result["label"],
     })
+
+    # Best-effort: the prediction itself already succeeded and is saved, so a
+    # Grad-CAM failure shouldn't fail the whole request -- just ship without it.
+    try:
+        prediction.gradcam_base64 = inference.generate_gradcam_overlay(
+            image_path, notes, wbc, crp, vitals=parsed_vitals
+        )
+    except Exception:
+        logger.exception("Grad-CAM generation failed for prediction %s", prediction.id)
+        prediction.gradcam_base64 = None
+
     return prediction

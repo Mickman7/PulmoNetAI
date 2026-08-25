@@ -1,3 +1,5 @@
+import base64
+
 import streamlit as st
 
 from api_client import search_patients, run_prediction
@@ -112,6 +114,17 @@ if st.button("Predict", type="primary"):
                 col1.metric("Prediction", result["label"])
                 col2.metric("Probability", f"{result['probability']:.1%}")
                 st.progress(result["probability"])
+
+                if result.get("gradcam_base64"):
+                    st.subheader("Grad-CAM")
+                    st.caption("Highlighted regions most influenced the model's prediction.")
+                    st.image(
+                        base64.b64decode(result["gradcam_base64"]),
+                        caption="Grad-CAM overlay",
+                        width=300,
+                    )
+                else:
+                    st.caption("Grad-CAM heatmap unavailable for this prediction.")
 
                 if vitals_data is not None:
                     st.caption("Prediction used your uploaded vitals.")

@@ -1,10 +1,4 @@
 import torch
-import torch.nn.functional as F
-import numpy as np
-import cv2
-
-import torch
-import torch.nn.functional as F
 import numpy as np
 import cv2
 
@@ -13,33 +7,44 @@ class SwinGradCAM:
     def __init__(self, model, target_layer, grid_size=(7, 7)):
         """
         model: End-to-end multimodal model.
-        target_layer: Final block or norm layer in the Swin backbone.
-        grid_size: Spatial patch dimensions (H_patches, W_patches) at target layer.
-                   Default (7, 7) for 224x224 input passing through 4 stages (224 / 32 = 7).
+        target_layer: Final stage/block in the Swin backbone whose spatial
+                       feature map should be explained (e.g.
+                       model.image_encoder.encoder.layers[-1]).
+        grid_size: Fallback (H_patches, W_patches) used only when the target
+                   layer's raw forward output doesn't carry its own spatial
+                   dimensions. A Swinv2Stage reports its own (height, width)
+                   per forward call as part of its output tuple, and that is
+                   always preferred over this fixed guess -- input image size
+                   or backbone variant changing the true grid (e.g. 8x8 for a
+                   256x256 SwinV2 input, not the 7x7 you'd get at 224x224)
+                   used to silently corrupt the reshape instead of erroring.
         """
         self.model = model
         self.target_layer = target_layer
         self.grid_size = grid_size
         self.gradients = None
         self.activations = None
+        self._activation_grid = None
 
         self.target_layer.register_forward_hook(self._save_activations)
         self.target_layer.register_full_backward_hook(self._save_gradients)
 
-    def _reshape_patch_tensor(self, tensor):
+    def _reshape_patch_tensor(self, tensor, grid_size=None):
         """
         Transforms Swin patch sequences into standard CNN feature maps: [B, C, H, W]
         """
+        grid_size = grid_size or self.grid_size
+
         # Case 1: Tensor is 3D [Batch, N_patches, Channels]
         if tensor.dim() == 3:
             B, N, C = tensor.shape
-            
+
             # Remove [CLS] token if model variant prepends one
-            if N == (self.grid_size[0] * self.grid_size[1]) + 1:
+            if N == (grid_size[0] * grid_size[1]) + 1:
                 tensor = tensor[:, 1:, :]
                 N -= 1
-                
-            H, W = self.grid_size
+
+            H, W = grid_size
             # Reshape [B, H*W, C] -> [B, H, W, C] -> [B, C, H, W]
             tensor = tensor.reshape(B, H, W, C)
             tensor = tensor.permute(0, 3, 1, 2)
@@ -51,34 +56,75 @@ class SwinGradCAM:
 
         return tensor
 
+    @staticmethod
+    def _extract_grid_size(output):
+        """
+        Swinv2Stage.forward returns (hidden_states, hidden_states_before_downsampling,
+        output_dimensions), where output_dimensions is
+        (height, width, height_downsampled, width_downsampled) -- the first two
+        entries are the resolution of hidden_states itself. Any other module's
+        output (e.g. the dummy test layer's plain tensor) falls through to None,
+        so the caller-supplied grid_size is used instead.
+        """
+        if not (isinstance(output, tuple) and len(output) >= 3):
+            return None
+        dims = output[2]
+        if not (isinstance(dims, tuple) and len(dims) == 4):
+            return None
+        try:
+            return int(dims[0]), int(dims[1])
+        except (TypeError, ValueError):
+            return None
+
     def _save_activations(self, module, input, output):
+        grid = self._extract_grid_size(output)
         # Handle tuple outputs from intermediate blocks
         if isinstance(output, tuple):
             output = output[0]
-        self.activations = self._reshape_patch_tensor(output)
+        self._activation_grid = grid
+        self.activations = self._reshape_patch_tensor(output, grid)
 
     def _save_gradients(self, module, grad_input, grad_output):
         grad = grad_output[0]
         if isinstance(grad, tuple):
             grad = grad[0]
-        self.gradients = self._reshape_patch_tensor(grad)
+        self.gradients = self._reshape_patch_tensor(grad, self._activation_grid)
 
-    def generate_heatmap(self, image_tensor, text_tensor, lab_tensor, target_class=None):
+    def generate_heatmap(self, image_tensor, text_tensor, lab_tensor, target_class=None, **model_kwargs):
         self.model.eval()
         self.model.zero_grad()
 
+        if not image_tensor.requires_grad:
+            raise ValueError(
+                "image_tensor.requires_grad is False -- Grad-CAM needs gradients "
+                "w.r.t. the pixel input. A frozen (requires_grad=False) backbone "
+                "alone won't build an autograd graph back to the target layer; "
+                "call image_tensor.requires_grad_(True) before this, and don't "
+                "run it inside torch.no_grad()."
+            )
+
         # Forward pass
-        output = self.model(image_tensor, text_tensor, lab_tensor)
+        with torch.enable_grad():
+            output = self.model(image_tensor, text_tensor, lab_tensor, **model_kwargs)
+            if isinstance(output, tuple):
+                output = output[0]
 
-        if target_class is None:
-            target_class = torch.argmax(output, dim=1).item()
+            if target_class is None:
+                target_class = torch.argmax(output, dim=1).item() if output.shape[1] > 1 else 0
 
-        score = output[0, target_class]
-        score.backward()
+            score = output[0, target_class]
+            score.backward()
+
+        if self.activations is None or self.gradients is None:
+            raise RuntimeError(
+                "Grad-CAM hooks on the target layer never fired. Check that "
+                "target_layer is actually reached during the forward pass "
+                "(e.g. it isn't behind an unused branch)."
+            )
 
         # Extract transformed activations and gradients [Channels, H, W]
-        gradients = self.gradients[0].cpu().data.numpy()
-        activations = self.activations[0].cpu().data.numpy()
+        gradients = self.gradients[0].detach().cpu().numpy()
+        activations = self.activations[0].detach().cpu().numpy()
 
         # Channel importance weights via Global Average Pooling
         weights = np.mean(gradients, axis=(1, 2))
@@ -98,15 +144,15 @@ class SwinGradCAM:
 
 def overlay_heatmap(heatmap, original_image_np, alpha=0.4, colormap=cv2.COLORMAP_JET):
     """
-    Overlays the Grad-CAM heatmap onto the original original radiological image.
+    Overlays the Grad-CAM heatmap onto the original radiological image.
+    Returns an RGB uint8 array (both inputs/output treated as RGB throughout --
+    cv2.applyColorMap produces BGR, so it's converted back before returning).
     """
-    # Resize heatmap to match original image dimensions
     heatmap_resized = cv2.resize(heatmap, (original_image_np.shape[1], original_image_np.shape[0]))
-    
-    # Convert heatmap to RGB image
-    heatmap_uint8 = np.uint8(255 * heatmap_resized)
-    heatmap_colored = cv2.applyColorMap(heatmap_uint8, colormap)
 
-    # Overlay heatmap on original image
+    heatmap_uint8 = np.uint8(255 * heatmap_resized)
+    heatmap_colored_bgr = cv2.applyColorMap(heatmap_uint8, colormap)
+    heatmap_colored = cv2.cvtColor(heatmap_colored_bgr, cv2.COLOR_BGR2RGB)
+
     overlaid_image = cv2.addWeighted(heatmap_colored, alpha, original_image_np, 1 - alpha, 0)
     return overlaid_image, heatmap_resized
