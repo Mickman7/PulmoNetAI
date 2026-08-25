@@ -5,6 +5,7 @@ This is the grounding mechanism that keeps reports traceable to real model outpu
 """
 
 import os
+import re
 
 from langchain_openai import ChatOpenAI
 from .state import AgentState
@@ -14,6 +15,8 @@ from backend.models.gradcam import SwinGradCAM, overlay_heatmap
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)  # low temp -> deterministic, less hallucination
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "report_template.txt")
+
+CITATION_PATTERN = re.compile(r"\[Source:\s*[^\]]+\]", re.IGNORECASE)
 
 
 
@@ -95,23 +98,29 @@ def analysis_node(state: AgentState) -> dict:
 def reasoning_node(state: AgentState) -> dict:
     records_block = _render_records(state["records"])
     patient_summary = state["patient_summary"]
+    analysis = state["analysis"]
     guidelines = state.get("guideline_context", "No guidelines provided.")
 
-    prompt = """
+    prompt = f"""
         Act as a Senior Consultant Respiratory Physician conducting a formal diagnostic review.
 
         INPUT DATA:
-        Patient Demographics & Features: {patient_data}
+        Patient Demographics & Features: {patient_summary}
+
+        Selected records (oldest to newest):
+        {records_block}
+
         Vision Classifier Output & Visual Attention: {analysis}
-        Retrieved Guidance: {guideline_context}
+        Retrieved Guidance: {guidelines}
 
         TASK:
-        Deliver a concise clinical synthesis evaluating the prediction. 
+        Deliver a concise clinical synthesis evaluating the prediction.
 
         STRICT FORMATTING RULES:
         1. Do NOT use meta-language or planning text (e.g., "Let's assume", "Step 1", "To perform a clinical validation").
         2. State clinical facts directly.
         3. Quantify alignment by directly pairing patient findings with retrieved thresholds.
+        4. Each excerpt in Retrieved Guidance above is tagged with its own source (e.g. "source: NG250-summary.pdf" or "PMID: 12345678"). Every guideline threshold you cite MUST come from one of those excerpts and MUST carry an inline citation immediately after it, in the exact form [Source: <source or PMID from that excerpt>]. Never state a guideline threshold that isn't backed by a Retrieved Guidance excerpt -- if none of the excerpts cover a marker (e.g. no WBC threshold was retrieved), say so plainly instead of citing a general-knowledge figure with no source.
 
         EXPECTED STRUCTURE:
 
@@ -119,12 +128,12 @@ def reasoning_node(state: AgentState) -> dict:
         - State whether the model classification is valid, citing primary radiological and lab drivers.
 
         SPECIFIC GUIDELINE MAPPING:
-        - Inflammatory Baseline: Pair patient CRP/WBC against guideline markers (e.g., NG250 CRP threshold > 100 mg/L vs patient CRP of 165 mg/L).
-        - Oxygenation & Vitals: Pair patient SpO2/vitals against guideline admission boundaries (e.g., NG250 SpO2 threshold < 92% vs patient SpO2 of 89%).
+        - Inflammatory Baseline: Pair the patient's actual CRP/WBC values (from the input data above) against relevant guideline markers found in the Retrieved Guidance, in the form "guideline threshold X [Source: ...] vs patient value Y". Only state a pairing when the patient's own value is present in the input data -- never invent or assume a value.
+        - Oxygenation & Vitals: Pair the patient's actual SpO2/vitals against guideline admission boundaries, following the same rule. If vitals are marked "Not provided" for a record, explicitly state that oxygenation cannot be assessed against guideline thresholds for that record -- do not cite any SpO2 number, including any threshold or example value that appears in the Retrieved Guidance itself. Guideline figures are reference ranges from clinical literature, never this patient's own measurement.
         - Imaging Synthesis: Explain how the visual attention distribution aligns with expected radiological patterns.
 
         MANAGEMENT RATIONALE:
-        - State the care setting escalation dictated by these threshold breaches.
+        - State the care setting escalation dictated by these threshold breaches, citing [Source: ...] for any guideline-driven escalation.
         """
 
     reasoning_res = llm.invoke(prompt).content
@@ -132,6 +141,46 @@ def reasoning_node(state: AgentState) -> dict:
     # Return ONLY the key updated in this node
     return {"reasoning": reasoning_res}
 
+
+
+def _has_citation(text: str) -> bool:
+    return bool(CITATION_PATTERN.search(text))
+
+
+def _ensure_citations(report_text: str, reasoning: str, guidelines: str) -> str:
+    """
+    Deterministic verification pass. The LLM's instruction to carry [Source: ...]
+    citations forward from the Consistency Check into the report is followed
+    inconsistently (~40% hit rate measured in backend/tests/evaluate_reports.py).
+    Checking is a plain regex; only when it finds a real miss do we spend a
+    corrective LLM call, rather than accepting the silent drop or re-running
+    generation from scratch.
+    """
+    if not _has_citation(reasoning):
+        return report_text  # nothing to carry forward -- nothing to check
+
+    if _has_citation(report_text):
+        return report_text  # already compliant
+
+    fix_prompt = f"""The report below was generated from the Consistency Check below it, but
+        dropped every [Source: ...] citation the Consistency Check backs its guideline-derived
+        claims with.
+
+        Revise the report to reinsert a [Source: ...] citation, copied verbatim from the
+        Consistency Check or Retrieved Guidelines, next to each guideline-derived claim in
+        sections 4 and 5. Change nothing else -- keep every other word, section, and field
+        exactly as-is. Return the full corrected report.
+
+        --- Report ---
+        {report_text}
+
+        --- Consistency Check (source of the missing citations) ---
+        {reasoning}
+
+        --- Retrieved Guidelines ---
+        {guidelines}"""
+
+    return llm.invoke(fix_prompt).content
 
 
 def report_node(state: AgentState) -> dict:
@@ -151,7 +200,8 @@ def report_node(state: AgentState) -> dict:
         - Use explicit, objective language in the active voice.
         - Do not add conversational text, preambles, or metadata outside the structured report and retrieved source information.
         - For any field the source information does not cover, write exactly: Not available/Not assessed. Never estimate or invent a value.
-        - Explicitly reference retrieved guideline sources (e.g. [Source: NG250]) when justifying clinical recommendations.
+        - The Consistency Check below already contains [Source: ...] citations for every guideline threshold it references. When section 4 or 5 restates or summarises a claim from the Consistency Check, you MUST keep that claim's [Source: ...] citation attached -- do not paraphrase a cited guideline comparison into prose that drops the citation. Do not invent a new citation that isn't already present in the Consistency Check or Retrieved Guidelines below.
+        - NOTE the template below uses [square brackets] two different ways -- do not confuse them: the template's own [bracketed instructions] (e.g. "[Findings]", "[Summarise ...]") describe what to write and must NOT appear in your output; a [Source: ...] citation is the opposite -- it is literal output text you must actually write, copied verbatim from the Consistency Check or Retrieved Guidelines, every time you use a guideline-sourced claim.
 
         {template}
 
@@ -168,7 +218,8 @@ def report_node(state: AgentState) -> dict:
         Consistency Check: {reasoning}"""
 
     report_res = llm.invoke(prompt).content
-    
+    report_res = _ensure_citations(report_res, reasoning, guidelines)
+
     # Return ONLY the key updated in this node
     return {"report": report_res}
 
