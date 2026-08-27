@@ -25,6 +25,10 @@ RAG_MODE_SOURCES = {
 _vector_store = None  # Module-level cache for Chroma instance
 _pubmed_query_llm = None  # Module-level cache for the query-condensation LLM
 _rerank_judge_llm = None  # Module-level cache for the candidate-pool reranker
+_grading_llm = None  # Module-level cache for the retrieval-sufficiency grader
+_rewrite_llm = None  # Module-level cache for the query-rewrite step
+
+NO_CONTEXT_FOUND = "No relevant guideline or literature content found."
 
 # How many extra candidates to over-fetch before reranking down to the
 # requested k. A binary keep/drop filter (tried and reverted) hurt recall by
@@ -262,13 +266,77 @@ def retrieve_context(
             excerpt_counter += 1
 
     if not blocks:
-        return "No relevant guideline or literature content found."
+        return NO_CONTEXT_FOUND
 
     return "\n\n".join(blocks)
 
 def build_retrieval_query(patient_summary: str, records_block: str) -> str:
     """Builds a search query from patient evidence."""
     return f"{patient_summary}\n{records_block}"
+
+
+def grade_retrieval(query: str, context: str) -> tuple[bool, str]:
+    """
+    Grade step of a corrective-RAG loop: judges whether the retrieved context
+    is actually usable evidence for this specific case -- concrete enough to
+    ground threshold comparisons and management guidance -- rather than just
+    topically adjacent. Returns (sufficient, reasoning).
+
+    An empty/sentinel retrieval is graded deterministically (no LLM call
+    needed to know nothing came back).
+    """
+    if not context or context.strip() == NO_CONTEXT_FOUND:
+        return False, "No content was retrieved."
+
+    global _grading_llm
+    if _grading_llm is None:
+        _grading_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+    prompt = (
+        "You are grading retrieved clinical guideline/literature context for a RAG "
+        "pipeline that writes a diagnostic report. Judge whether the context is "
+        "specific and on-topic enough to ground clinical claims for THIS case -- "
+        "concrete facts (thresholds, condition-specific guidance) usable here, not "
+        "just generally related to the subject area.\n\n"
+        f"Case query:\n{query}\n\n"
+        f"Retrieved context:\n{context}\n\n"
+        "Respond on the first line with exactly one word, SUFFICIENT or INSUFFICIENT. "
+        "On the second line, give a one-sentence reason."
+    )
+    try:
+        response = _grading_llm.invoke(prompt).content.strip()
+        lines = response.splitlines()
+        verdict = lines[0].strip().upper() if lines else ""
+        reasoning = lines[1].strip() if len(lines) > 1 else ""
+        return verdict.startswith("SUFFICIENT"), reasoning
+    except Exception:
+        return True, "Grading call failed; defaulting to accept."  # fail open -- never block the pipeline on a judge error
+
+
+def rewrite_retrieval_query(original_query: str, grade_reasoning: str) -> str:
+    """
+    Rewrite step of a corrective-RAG loop: reformulates the query using
+    precise clinical/guideline terminology after a failed relevance grade,
+    rather than resubmitting the query that already missed.
+    """
+    global _rewrite_llm
+    if _rewrite_llm is None:
+        _rewrite_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+
+    prompt = (
+        "The retrieval query below returned guideline/literature context judged "
+        "insufficient for this clinical case. Rewrite it to target the clinical "
+        "topic more directly, using precise medical/guideline terminology "
+        "(condition names, threshold markers) instead of restating raw case data. "
+        "Return ONLY the rewritten query text -- no explanation, no quotes.\n\n"
+        f"Original query:\n{original_query}\n\n"
+        f"Why it was insufficient: {grade_reasoning}"
+    )
+    try:
+        rewritten = _rewrite_llm.invoke(prompt).content.strip()
+        return rewritten or original_query
+    except Exception:
+        return original_query  # fail open -- retry with the same query rather than crash the loop
 
 
 if __name__ == "__main__":

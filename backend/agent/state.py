@@ -18,6 +18,10 @@ class AgentState(TypedDict):
     records: List[PredictionRecord]   # clinician-selected predictions, oldest -> newest
     rag_mode: Optional[str]           # "local" | "pubmed" | "hybrid" -- which retrieval condition to test
     guideline_context: Optional[str]
+    retrieval_query: Optional[str]            # query used for the most recent retrieval attempt (rewritten on retry)
+    retrieval_attempts: Optional[int]         # how many retrieval attempts made so far -- caps the grade/rewrite loop
+    retrieval_sufficient: Optional[bool]      # most recent grader verdict on guideline_context
+    retrieval_grade_reasoning: Optional[str]  # why the grader judged it (in)sufficient -- feeds the rewrite step
     analysis: Optional[str]
     reasoning: Optional[str]
     report: Optional[str]

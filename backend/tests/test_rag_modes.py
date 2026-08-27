@@ -92,7 +92,8 @@ def test_retrieval_node_passes_expected_sources(base_state, mode, expected_sourc
 
         _, kwargs = mock_retrieve.call_args
         assert kwargs["sources"] == expected_sources
-        assert result == {"guideline_context": "context block"}
+        assert result["guideline_context"] == "context block"
+        assert result["retrieval_attempts"] == 1
 
 
 def test_retrieval_node_defaults_to_hybrid_when_unset(base_state):

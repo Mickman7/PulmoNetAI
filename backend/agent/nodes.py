@@ -9,7 +9,13 @@ import re
 
 from langchain_openai import ChatOpenAI
 from .state import AgentState
-from .rag import RAG_MODE_SOURCES, build_retrieval_query, retrieve_context
+from .rag import (
+    RAG_MODE_SOURCES,
+    build_retrieval_query,
+    retrieve_context,
+    grade_retrieval,
+    rewrite_retrieval_query,
+)
 from backend.models.gradcam import SwinGradCAM, overlay_heatmap
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)  # low temp -> deterministic, less hallucination
@@ -17,6 +23,12 @@ llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)  # low temp -> deterministi
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "report_template.txt")
 
 CITATION_PATTERN = re.compile(r"\[Source:\s*[^\]]+\]", re.IGNORECASE)
+
+# Initial attempt + up to 2 retries. The grade/rewrite loop (retrieval ->
+# grade_retrieval -> rewrite_query -> retrieval -> ...) is capped by this so a
+# corpus that just doesn't cover a topic can't loop forever -- once hit, the
+# pipeline proceeds with whatever was last retrieved instead of blocking.
+MAX_RETRIEVAL_ATTEMPTS = 3
 
 
 
@@ -55,19 +67,57 @@ def retrieval_node(state: AgentState) -> dict:
         )
     sources = RAG_MODE_SOURCES[rag_mode]
 
-    query = build_retrieval_query(patient_summary, records_block)
+    # A rewrite from a prior failed grade takes precedence over rebuilding
+    # from scratch -- that's what makes this the "retrieve again" leg of the
+    # grade/rewrite loop rather than always restarting from the same query.
+    query = state.get("retrieval_query") or build_retrieval_query(patient_summary, records_block)
     context = retrieve_context(query, k=4, sources=sources)
+    attempts = (state.get("retrieval_attempts") or 0) + 1
 
     # Visual terminal indicator
     print("\n" + "=" * 60)
     print(" [RAG PIPELINE EXECUTED]")
     print(f" Mode: {rag_mode} (sources: {sources})")
+    print(f" Attempt: {attempts}/{MAX_RETRIEVAL_ATTEMPTS}")
     print(f" Query: {query[:100]}...")
     print(f" Context Retrieved: {len(context)} characters")
     print("=" * 60 + "\n")
 
-    # Return ONLY the key updated in this node
-    return {"guideline_context": context}
+    return {
+        "guideline_context": context,
+        "retrieval_query": query,
+        "retrieval_attempts": attempts,
+    }
+
+
+def grade_retrieval_node(state: AgentState) -> dict:
+    """
+    Grade step of the corrective-RAG loop: judges whether the context just
+    retrieved is actually usable evidence for this case. build_agent() routes
+    on retrieval_sufficient -- True proceeds to analysis, False loops to
+    rewrite_query_node (unless MAX_RETRIEVAL_ATTEMPTS has been hit).
+    """
+    sufficient, reasoning = grade_retrieval(state["retrieval_query"], state["guideline_context"])
+
+    print(
+        f"\n[RAG GRADE] attempt {state.get('retrieval_attempts')}: "
+        f"{'SUFFICIENT' if sufficient else 'INSUFFICIENT'} -- {reasoning}\n"
+    )
+
+    return {
+        "retrieval_sufficient": sufficient,
+        "retrieval_grade_reasoning": reasoning,
+    }
+
+
+def rewrite_query_node(state: AgentState) -> dict:
+    """Rewrite step: reformulates the query after a failed grade, then loops
+    back to retrieval_node via build_agent()'s rewrite_query -> retrieval edge."""
+    rewritten = rewrite_retrieval_query(state["retrieval_query"], state.get("retrieval_grade_reasoning", ""))
+
+    print(f"\n[RAG REWRITE] '{state['retrieval_query'][:80]}' -> '{rewritten[:80]}'\n")
+
+    return {"retrieval_query": rewritten}
 
 
 def analysis_node(state: AgentState) -> dict:

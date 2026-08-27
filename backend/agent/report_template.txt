@@ -9,7 +9,7 @@ value to fill a gap.
 1. PATIENT DEMOGRAPHICS & VITALS
 Full Name: [Name]
 Date of Birth: [DOB]
-Age / Sex: [Age / Sex]
+Age: [Age] | Sex: [Sex]
 Date of Assessment: [Date of most recent selected encounter]
 
 Vitals Log:
