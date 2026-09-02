@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from PIL import Image
 
+from ...agent.utils import summarize_spatial_focus
 from ...database.db import get_db
 from ...database import crud
 from ...models import inference
@@ -56,6 +57,24 @@ def run_prediction(
 
     result = inference.predict(image_path, notes, wbc, crp, vitals=parsed_vitals)
 
+    # Best-effort: a Grad-CAM failure shouldn't block the prediction itself
+    # from saving -- attention_summary/gradcam_base64 just stay unset.
+    # attention_summary is derived from the Grad-CAM heatmap specifically
+    # (not the fusion module's attn_weights) -- the heatmap is the only
+    # tensor left that carries real per-patch spatial information since the
+    # fusion redesign pools the image into a single token before a 4-way
+    # [image, text, labs, vitals] self-attention (see agent/utils.py).
+    gradcam_base64 = None
+    attention_summary = None
+    try:
+        gradcam_result = inference.generate_gradcam_overlay(
+            image_path, notes, wbc, crp, vitals=parsed_vitals
+        )
+        gradcam_base64 = gradcam_result["gradcam_base64"]
+        attention_summary = summarize_spatial_focus(gradcam_result["heatmap"])
+    except Exception:
+        logger.exception("Grad-CAM generation failed for prediction on patient %s", patient_id)
+
     prediction = crud.create_prediction(db, patient_id, {
         "image_path": image_path,
         "notes": notes,
@@ -63,16 +82,8 @@ def run_prediction(
         "crp": crp,
         "probability": result["probability"],
         "label": result["label"],
+        "attention_summary": attention_summary,
     })
-
-    # Best-effort: the prediction itself already succeeded and is saved, so a
-    # Grad-CAM failure shouldn't fail the whole request -- just ship without it.
-    try:
-        prediction.gradcam_base64 = inference.generate_gradcam_overlay(
-            image_path, notes, wbc, crp, vitals=parsed_vitals
-        )
-    except Exception:
-        logger.exception("Grad-CAM generation failed for prediction %s", prediction.id)
-        prediction.gradcam_base64 = None
+    prediction.gradcam_base64 = gradcam_base64
 
     return prediction

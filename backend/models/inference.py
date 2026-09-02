@@ -82,12 +82,15 @@ def predict(image_path: str, notes: str, wbc: float, crp: float, vitals=None) ->
     }
 
 
-def generate_gradcam_overlay(image_path: str, notes: str, wbc: float, crp: float, vitals=None) -> str:
+def generate_gradcam_overlay(image_path: str, notes: str, wbc: float, crp: float, vitals=None) -> dict:
     """
     Runs a gradient-enabled forward+backward pass (separate from predict()'s
-    torch.no_grad() path, which can't produce gradients) and returns a
-    base64-encoded PNG of the Grad-CAM heatmap overlaid on the radiograph,
-    explaining which image regions drove the prediction.
+    torch.no_grad() path, which can't produce gradients). Returns:
+      - "gradcam_base64": base64-encoded PNG of the heatmap overlaid on the radiograph
+      - "heatmap": the raw normalized [H_patches, W_patches] CAM array (pre-resize),
+        for callers that want the underlying data rather than just the picture --
+        e.g. agent.utils.summarize_spatial_focus() for a concentrated-vs-diffuse
+        text description.
     """
     model = load_model()
     img_processor, tokenizer = load_processors()
@@ -129,4 +132,7 @@ def generate_gradcam_overlay(image_path: str, notes: str, wbc: float, crp: float
 
     buffer = io.BytesIO()
     Image.fromarray(overlay_rgb).save(buffer, format="PNG")
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return {
+        "gradcam_base64": base64.b64encode(buffer.getvalue()).decode("utf-8"),
+        "heatmap": heatmap,
+    }

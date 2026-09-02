@@ -33,7 +33,7 @@ Physical Examination Findings:
 
 3. DIAGNOSTIC INVESTIGATIONS
 Radiology Findings (Chest Radiograph):
-[Describe the model's image attention pattern and what it suggests about the radiographic findings -- do not describe specific radiological features not implied by the attention summary]
+[State how much diagnostic weight the model placed on the image compared to the text, labs, and vitals for this case, based on the modality attention breakdown provided. Do not describe specific regions, locations, or visual features on the X-ray, as this information is not available to the model.]
 
 Laboratory Evaluations:
 - White Cell Count (WBC): [Value] x10^9/L

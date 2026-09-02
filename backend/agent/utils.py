@@ -1,3 +1,6 @@
+import numpy as np
+
+
 def build_patient_summary(patient) -> str:
     """Renders a patient's structured medical history into a short text block
     for the agent prompts. Only includes fields that are actually populated."""
@@ -21,11 +24,39 @@ def build_patient_summary(patient) -> str:
     return " | ".join(parts)
 
 
-def summarize_attention(attn_weights) -> str:
-    """Turn raw attention weights into a short interpretable label.
-    attn_weights shape: [1, 1, num_patches]"""
-    weights = attn_weights.squeeze().detach().cpu()
-    max_weight = weights.max().item()
-    if max_weight > 0.05:
+def summarize_spatial_focus(heatmap) -> str:
+    """
+    Turn a Grad-CAM heatmap into a short interpretable label describing
+    whether the model's image focus was localized or diffuse.
+
+    heatmap: normalized 2D array [H_patches, W_patches] from
+    SwinGradCAM.generate_heatmap(), values in [0, 1] with max == 1
+    (unless the CAM was entirely zero).
+
+    This replaced an older version keyed off the fusion module's
+    attn_weights -- that was valid when this model used cross-attention
+    with shape [1, 1, num_patches] (one query attending over image
+    patches), so "concentrated vs. spread" was a real per-patch
+    measurement. The current architecture pools the image into a single
+    token before a 4-token [image, text, labs, vitals] self-attention
+    fusion, so attn_weights is now [batch, 4, 4] -- modality-to-modality,
+    with no patch-level information left in it at all. The Grad-CAM
+    heatmap is the only tensor that still carries real spatial
+    information, so it's the only valid source for this claim now.
+    """
+    weights = np.asarray(heatmap)
+    n_patches = weights.size
+    if n_patches == 0 or weights.max() <= 0:
+        return "not available (no activation detected)"
+
+    # Peak-to-mean ratio, normalized by patch count so the score stays
+    # comparable across different grid resolutions (e.g. 7x7 vs 8x8):
+    # ranges from ~1/n_patches (activation spread uniformly across every
+    # patch) up to 1.0 (a single hot patch, everything else exactly 0).
+    # 0.15 corresponds roughly to activation concentrated in ~10% of the
+    # image -- an empirical cutoff for "localized" vs. "broad", in the
+    # same spirit as the old function's 0.05 cutoff.
+    concentration = (weights.max() / (weights.mean() + 1e-6)) / n_patches
+    if concentration > 0.15:
         return "concentrated on specific image regions (suggests a localized finding)"
     return "spread broadly across the image (suggests a diffuse or less certain finding)"

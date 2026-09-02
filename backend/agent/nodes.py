@@ -18,7 +18,7 @@ from .rag import (
 )
 from backend.models.gradcam import SwinGradCAM, overlay_heatmap
 
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)  # low temp -> deterministic, less hallucination
+llm = ChatOpenAI(model="gpt-4o", temperature=0)  # low temp -> deterministic, less hallucination
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "report_template.txt")
 
@@ -128,7 +128,7 @@ def analysis_node(state: AgentState) -> dict:
         one or more selected clinical encounters for the same patient.
 
         CRITICAL ARCHITECTURE RULES:
-        1. Every record contains a chest X-ray image (reflected in the 'Attention' field) alongside the lab data. There are NO records without imaging data.
+        1. Every record contains a chest X-ray image, clinical text, lab values, and (optionally) vitals. The 'Attention' field reflects how much the model relied on EACH of these modalities relative to the others when making its prediction -- it does NOT describe specific regions or visual features within the X-ray image itself, since that information is not available to the model.
         2. Vitals (heart rate, respiratory rate, SpO2 trend) are an OPTIONAL third input. When present, treat them strictly as supporting/corroborating evidence for the image+lab-driven prediction — never as a primary driver of the result. When a record says vitals were "Not provided", do not speculate about what they might have shown.
         3. The model evaluates each encounter as a completely independent, static point in time. It has no temporal memory, recurrence, or awareness of trends. Any change in prediction across records is driven by differences in the input features (such as the X-ray image tracking localized findings), not a calculated trend over time.
 
@@ -136,8 +136,8 @@ def analysis_node(state: AgentState) -> dict:
 
         Selected records (oldest to newest):
         {records_block}
-
-        In 3-4 sentences, describe how the image attention focus and the clinical/lab data interact to drive these results, noting where available vitals corroborate that picture. If multiple records are present, explain the changes based purely on differing feature inputs between independent encounters without implying the model tracks a temporal trend. Use only the information above."""
+        
+        In 3-4 sentences, describe how much the model relied on each modality (image, text, labs, vitals) relative to the others, based on the attention breakdown, and how that relates to the clinical/lab data. Do not describe specific regions or features within the X-ray image itself noting where available vitals corroborate that picture. If multiple records are present, explain the changes based purely on differing feature inputs between independent encounters without implying the model tracks a temporal trend. Use only the information above."""
 
     analysis_res = llm.invoke(prompt).content
     

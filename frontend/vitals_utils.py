@@ -1,10 +1,9 @@
 """
 Vitals CSV template + parser for the Predict page.
-
-Only 3 of the 8 channels are confirmed (heart_rate, respiratory_rate, spo2).
-The remaining 5 are placeholder columns (vital_4..vital_8) until their real
-meaning is decided -- rename these columns here AND in synthetic_vitals.py /
-multimodal_system.py's VITALS_CHANNELS constant together when that happens.
+Column order must exactly match the 8-channel order the model was trained
+on (see backend/multimodal_dataset_pipeline.py's FEATURE_COLS): HR, O2Sat,
+Temp, Resp, SBP, MAP, WBC, FiO2. If that training order ever changes, this
+file's VITALS_COLUMNS list needs to be updated to match.
 """
 
 import io
@@ -13,17 +12,20 @@ import pandas as pd
 
 HOURS = 24
 VITALS_COLUMNS = [
-    "heart_rate", "respiratory_rate", "spo2",
-    "vital_4", "vital_5", "vital_6", "vital_7", "vital_8",  # placeholders -- rename once decided
+    "heart_rate", "spo2", "temperature", "respiratory_rate",
+    "systolic_bp", "map", "wbc", "fio2",
 ]
 
-# Neutral defaults for the template: midpoint values for the known 3,
-# 0.0 placeholders for the unconfirmed 5 (edit once their ranges are known)
+# Neutral defaults for the template
 _TEMPLATE_DEFAULTS = {
     "heart_rate": 90.0,
-    "respiratory_rate": 21.0,
     "spo2": 93.0,
-    "vital_4": 0.0, "vital_5": 0.0, "vital_6": 0.0, "vital_7": 0.0, "vital_8": 0.0,
+    "temperature": 37.0,
+    "respiratory_rate": 21.0,
+    "systolic_bp": 120.0,
+    "map": 80.0,
+    "wbc": 8.0,
+    "fio2": 21.0,  # 21% = room air, the normal default when a patient isn't on supplemental oxygen
 }
 
 
