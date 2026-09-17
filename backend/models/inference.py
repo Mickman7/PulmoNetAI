@@ -87,7 +87,7 @@ def generate_gradcam_overlay(image_path: str, notes: str, wbc: float, crp: float
     Runs a gradient-enabled forward+backward pass (separate from predict()'s
     torch.no_grad() path, which can't produce gradients). Returns:
       - "gradcam_base64": base64-encoded PNG of the heatmap overlaid on the radiograph
-      - "heatmap": the raw normalized [H_patches, W_patches] CAM array (pre-resize),
+      - "heatmap": the raw normalised [H_patches, W_patches] CAM array (pre-resize),
         for callers that want the underlying data rather than just the picture --
         e.g. agent.utils.summarize_spatial_focus() for a concentrated-vs-diffuse
         text description.

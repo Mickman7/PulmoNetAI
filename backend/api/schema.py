@@ -65,7 +65,7 @@ class PredictionOut(BaseModel):
     attention_summary: Optional[str] = None
     created_at: datetime
     # Not a DB column -- set as a plain attribute on the ORM object in the
-    # predict route before serialization, so it rides along in the response
+    # predict route before serialisation, so it rides along in the response
     # without needing a migration.
     gradcam_base64: Optional[str] = None
 

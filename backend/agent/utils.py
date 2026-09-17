@@ -29,7 +29,7 @@ def summarize_spatial_focus(heatmap) -> str:
     Turn a Grad-CAM heatmap into a short interpretable label describing
     whether the model's image focus was localized or diffuse.
 
-    heatmap: normalized 2D array [H_patches, W_patches] from
+    heatmap: normalised 2D array [H_patches, W_patches] from
     SwinGradCAM.generate_heatmap(), values in [0, 1] with max == 1
     (unless the CAM was entirely zero).
 
@@ -49,7 +49,7 @@ def summarize_spatial_focus(heatmap) -> str:
     if n_patches == 0 or weights.max() <= 0:
         return "not available (no activation detected)"
 
-    # Peak-to-mean ratio, normalized by patch count so the score stays
+    # Peak-to-mean ratio, normalised by patch count so the score stays
     # comparable across different grid resolutions (e.g. 7x7 vs 8x8):
     # ranges from ~1/n_patches (activation spread uniformly across every
     # patch) up to 1.0 (a single hot patch, everything else exactly 0).

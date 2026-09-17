@@ -96,7 +96,7 @@ else:
     print("Merging metadata and physiological time-series...")
     ds_merged = ds_train.map(merge_metadata, batched=False)
 
-    # 4. Initialize tokenizers and processors
+    # 4. Initialise tokenizers and processors
     img_processor = AutoImageProcessor.from_pretrained(
         "microsoft/swinv2-tiny-patch4-window8-256", token=HF_TOKEN
     )

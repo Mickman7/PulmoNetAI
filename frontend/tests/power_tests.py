@@ -10,7 +10,7 @@ from backend.models import inference
 def profile_with_codecarbon():
     print("Initializing CodeCarbon Emissions Tracker...")
     
-    # Ensure the metrics storage directory exists before initializing the tracker
+    # Ensure the metrics storage directory exists before initialising the tracker
     metrics_dir = "tests/metrics"
     os.makedirs(metrics_dir, exist_ok=True)
     

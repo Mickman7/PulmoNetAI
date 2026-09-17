@@ -307,7 +307,7 @@ for lr in args.lrs:
 final_model = MultimodalSystem(freeze_encoders=True).to(device)
 final_model.load_state_dict(best_model_state)
 
-# 5. File Serialization
+# 5. File Serialisation
 PATH = (
     "/Users/mickman/Documents/programs/PulmoNetAI/backend/models/multimodal_pneumonia_model.pth"
 )

@@ -283,7 +283,7 @@ def image_analysis_node(state):
     text_data = state["text_tensor"]
     lab_data = state["lab_tensor"]
     
-    # Initialize Grad-CAM on Swin backbone's final stage
+    # Initialise Grad-CAM on Swin backbone's final stage
     target_layer = model.swin_backbone.layers[-1]
     grad_cam = SwinGradCAM(model, target_layer)
     
