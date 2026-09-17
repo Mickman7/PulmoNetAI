@@ -59,10 +59,8 @@ def extract_embeddings(model, loader, device):
     labs and vitals tensors (these bypass the frozen encoders entirely --
     they're processed by the trainable lab_cnn/vitals_cnn inside each head).
 
-    NOTE: `batch["vitals"]` assumes your processed dataset stores a single
-    [24, 8] array per sample under that column name. Verify this matches
-    your actual dataset schema (from multimodal_dataset_pipeline.py) and
-    adjust the key if it differs -- this could not be confirmed directly.
+    `batch["vitals"]` is the [24, 8] hourly vitals array produced by
+    multimodal_dataset_pipeline.py.
     """
     model.eval()
     img_seqs, text_pooled, labs, vitals, labels = [], [], [], [], []
@@ -596,8 +594,6 @@ if __name__ == "__main__":
     train_ds = sub_split["train"]
     val_ds = sub_split["test"]
 
-    # NOTE: "vitals" column name assumed -- verify against your actual
-    # processed dataset schema and adjust if it differs.
     columns_to_load = ["pixel_values", "input_ids", "attention_mask", "labels", "wbc", "crp", "vitals"]
     train_ds.set_format(type="torch", columns=columns_to_load)
     val_ds.set_format(type="torch", columns=columns_to_load)

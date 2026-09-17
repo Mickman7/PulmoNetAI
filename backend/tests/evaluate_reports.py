@@ -18,9 +18,6 @@ Split deliberately into TWO kinds of checks:
 
 Requires: benchmark_cases.json (run generate_benchmark.py first) and a real
 OPENAI_API_KEY in your environment (the graph calls real LLMs).
-
-I could not run this end-to-end myself (no working OpenAI key / no working
-torch in my sandbox to run your actual model+agent). Run it on your machine.
 """
 
 import json

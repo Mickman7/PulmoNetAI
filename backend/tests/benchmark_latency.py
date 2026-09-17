@@ -100,6 +100,7 @@ def run_trial(case, image_path):
 
 
 def main():
+    os.makedirs(os.path.join(os.path.dirname(__file__), "results"), exist_ok=True)
     n_trials = int(sys.argv[1]) if len(sys.argv) > 1 else 10
     all_cases = json.load(open(BENCHMARK_PATH))
     cases = (all_cases * ((n_trials // len(all_cases)) + 1))[:n_trials]
