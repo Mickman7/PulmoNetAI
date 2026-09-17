@@ -26,7 +26,7 @@ CITATION_PATTERN = re.compile(r"\[Source:\s*[^\]]+\]", re.IGNORECASE)
 
 # Initial attempt + up to 2 retries. The grade/rewrite loop (retrieval ->
 # grade_retrieval -> rewrite_query -> retrieval -> ...) is capped by this so a
-# corpus that just doesn't cover a topic can't loop forever -- once hit, the
+# corpus that just doesn't cover a topic can't loop forever. once hit, the
 # pipeline proceeds with whatever was last retrieved instead of blocking.
 MAX_RETRIEVAL_ATTEMPTS = 3
 
@@ -136,7 +136,7 @@ def analysis_node(state: AgentState) -> dict:
 
         Selected records (oldest to newest):
         {records_block}
-        
+
         In 3-4 sentences, describe how much the model relied on each modality (image, text, labs, vitals) relative to the others, based on the attention breakdown, and how that relates to the clinical/lab data. Do not describe specific regions or features within the X-ray image itself noting where available vitals corroborate that picture. If multiple records are present, explain the changes based purely on differing feature inputs between independent encounters without implying the model tracks a temporal trend. Use only the information above."""
 
     analysis_res = llm.invoke(prompt).content
