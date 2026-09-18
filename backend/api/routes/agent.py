@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from ...database.db import get_db
 from ...database import crud
 from ...agent.graph import agent
-from ...agent.utils import build_patient_summary
+from ...agent.utils import build_patient_summary, find_nearest_encounter, format_vitals_summary
 from .. import schema
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -31,6 +31,8 @@ def run_agent(payload: schema.AgentRunRequest, db: Session = Depends(get_db)):
     # oldest -> newest, so the analysis node can reason about trends in order
     predictions = sorted(predictions, key=lambda p: p.created_at)
 
+    encounters = crud.get_encounters_for_patient(db, payload.patient_id)
+
     records = [
         {
             "created_at": p.created_at.isoformat(),
@@ -41,6 +43,7 @@ def run_agent(payload: schema.AgentRunRequest, db: Session = Depends(get_db)):
             "notes": p.notes or "",
             "wbc": p.wbc,
             "crp": p.crp,
+            "vitals_summary": format_vitals_summary(find_nearest_encounter(encounters, p.created_at)),
         }
         for p in predictions
     ]

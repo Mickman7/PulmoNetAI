@@ -28,3 +28,4 @@ transformers
 uvicorn[standard]
 chromadb
 pytest
+langchain-community
