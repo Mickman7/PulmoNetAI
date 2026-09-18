@@ -13,6 +13,18 @@ PulmoNetAI lets a clinician register a patient, upload a chest X-ray alongside f
 
 The system also tracks a full patient record — encounters, appointments, treatments — behind a FastAPI backend and a Streamlit frontend, and ships a research harness (ablation studies, attention-distribution analysis, latency and emissions benchmarking, report-quality evaluation) used to validate the model and the report pipeline before they're trusted with real cases.
 
+<details>
+  <summary><b>Step 1: Dashboard View</b> (Click to expand)</summary>
+  <br>
+  <img src="images/pulmoAI_home.png" alt="Dashboard View" width="100%">
+</details>
+
+<details>
+  <summary><b>Step 2: Analytics Panel</b> (Click to expand)</summary>
+  <br>
+  <img src="path/to/image2.png" alt="Analytics Panel" width="100%">
+</details>
+
 ## The Process
 
 1. **Dataset construction** — merge a public chest X-ray dataset with lab metadata and physiologically-plausible vitals sequences into one multimodal, model-ready dataset.
