@@ -16,7 +16,7 @@ The system also tracks a full patient record — encounters, appointments, treat
 <details>
   <summary><b>Step 1: Dashboard View</b> (Click to expand)</summary>
   <br>
-  <img src="https://github.com/Mickman7/PulmoNetAI/blob/main/images/PulmoAI_home.png" alt="Dashboard View" width="100%">
+  <img src="images/PulmoAI_home.png" alt="Dashboard View" width="100%">
 </details>
 
 <details>
