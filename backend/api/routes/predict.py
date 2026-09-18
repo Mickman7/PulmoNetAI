@@ -83,6 +83,7 @@ def run_prediction(
         "probability": result["probability"],
         "label": result["label"],
         "attention_summary": attention_summary,
+        "vitals": parsed_vitals,
     })
     prediction.gradcam_base64 = gradcam_base64
 
