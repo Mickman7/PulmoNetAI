@@ -13,16 +13,40 @@ PulmoNetAI lets a clinician register a patient, upload a chest X-ray alongside f
 
 The system also tracks a full patient record — encounters, appointments, treatments — behind a FastAPI backend and a Streamlit frontend, and ships a research harness (ablation studies, attention-distribution analysis, latency and emissions benchmarking, report-quality evaluation) used to validate the model and the report pipeline before they're trusted with real cases.
 
+## Project Example Images
 <details>
-  <summary><b>Step 1: Dashboard View</b> (Click to expand)</summary>
+  <summary><b>Home Page</b></summary>
   <br>
-  <img src="images/PulmoAI_home.png" alt="Dashboard View" width="100%">
+  <img src="images/PulmoAI_home.png" alt="Home Page" width="100%">
+</details>
+<details>
+  <summary><b>Prediction Form</b></summary>
+  <br>
+  <img src="images/Screenshot%202026-09-18%20at%2013.13.45.png" alt="Screenshot 1" width="100%">
 </details>
 
 <details>
-  <summary><b>Step 2: Analytics Panel</b> (Click to expand)</summary>
+  <summary><b>Prediction Page</b></summary>
   <br>
-  <img src="path/to/image2.png" alt="Analytics Panel" width="100%">
+  <img src="images/Screenshot%202026-09-18%20at%2013.14.30.png" alt="Screenshot 2" width="100%">
+</details>
+
+<details>
+  <summary><b>Patient Profile</b></summary>
+  <br>
+  <img src="images/Screenshot%202026-09-18%20at%2013.17.02.png" alt="Screenshot 3" width="100%">
+</details>
+
+<details>
+  <summary><b>Agent Output Page</b></summary>
+  <br>
+  <img src="images/Screenshot%202026-09-18%20at%2013.19.00.png" alt="Screenshot 4" width="100%">
+</details>
+
+<details>
+  <summary><b>Generated Medical Report</b></summary>
+  <br>
+  <img src="images/Screenshot%202026-09-18%20at%2013.50.12.png" alt="Screenshot 5" width="100%">
 </details>
 
 ## The Process
