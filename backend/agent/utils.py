@@ -24,6 +24,34 @@ def build_patient_summary(patient) -> str:
     return " | ".join(parts)
 
 
+def format_vitals_summary(encounter) -> str | None:
+    """Renders a ClinicalEncounter's vitals fields into a short text block for
+    the agent prompts. Only includes fields that are actually populated."""
+    if encounter is None:
+        return None
+    parts = []
+    if encounter.heart_rate is not None:
+        parts.append(f"HR {encounter.heart_rate} bpm")
+    if encounter.blood_pressure:
+        parts.append(f"BP {encounter.blood_pressure} mmHg")
+    if encounter.respiratory_rate is not None:
+        parts.append(f"RR {encounter.respiratory_rate}/min")
+    if encounter.temperature is not None:
+        parts.append(f"Temp {encounter.temperature}°C")
+    if encounter.spo2 is not None:
+        parts.append(f"SpO2 {encounter.spo2}%")
+    return ", ".join(parts) if parts else None
+
+
+def find_nearest_encounter(encounters, when):
+    """Pick the ClinicalEncounter closest in time to `when`, for pairing a
+    point-in-time vitals snapshot with the prediction made around the same
+    visit. Returns None if there are no encounters to choose from."""
+    if not encounters:
+        return None
+    return min(encounters, key=lambda e: abs((e.encounter_date - when).total_seconds()))
+
+
 def summarize_spatial_focus(heatmap) -> str:
     """
     Turn a Grad-CAM heatmap into a short interpretable label describing
