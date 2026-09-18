@@ -52,6 +52,35 @@ def find_nearest_encounter(encounters, when):
     return min(encounters, key=lambda e: abs((e.encounter_date - when).total_seconds()))
 
 
+# Column order for a prediction's stored `vitals` field -- must match
+# frontend/vitals_utils.py's VITALS_COLUMNS (the training feature order).
+VITALS_CSV_COLUMNS = [
+    "heart_rate", "spo2", "temperature", "respiratory_rate",
+    "systolic_bp", "map", "wbc", "fio2",
+]
+
+
+def format_vitals_timeseries_summary(vitals) -> str | None:
+    """Renders a prediction's 24-hour monitored vitals input into a short
+    first-hour -> last-hour text block for the agent prompts. Only the
+    channels the report template covers (HR, SpO2, temperature, respiratory
+    rate) plus systolic BP are surfaced -- there's no diastolic channel in
+    the monitor input, so a full BP reading is never fabricated."""
+    if not vitals:
+        return None
+    idx = {name: i for i, name in enumerate(VITALS_CSV_COLUMNS)}
+    first, last = vitals[0], vitals[-1]
+
+    return (
+        f"24h monitored trend (hour 0 -> {len(vitals) - 1}) — "
+        f"HR {first[idx['heart_rate']]:.1f}->{last[idx['heart_rate']]:.1f} bpm, "
+        f"SpO2 {first[idx['spo2']]:.1f}->{last[idx['spo2']]:.1f}%, "
+        f"Temp {first[idx['temperature']]:.1f}->{last[idx['temperature']]:.1f}°C, "
+        f"RR {first[idx['respiratory_rate']]:.1f}->{last[idx['respiratory_rate']]:.1f}/min, "
+        f"Systolic BP {first[idx['systolic_bp']]:.1f}->{last[idx['systolic_bp']]:.1f} mmHg"
+    )
+
+
 def summarize_spatial_focus(heatmap) -> str:
     """
     Turn a Grad-CAM heatmap into a short interpretable label describing

@@ -42,6 +42,9 @@ class Prediction(Base):
     wbc = Column(Float, nullable=True)
     crp = Column(Float, nullable=True)
     attention_summary = Column(String, nullable=True)
+    # [24, 8] nested list, one row per hour -- see frontend/vitals_utils.py's
+    # VITALS_COLUMNS for channel order. Optional: the model can run without it.
+    vitals = Column(JSON, nullable=True)
 
     probability = Column(Float, nullable=False)
     label = Column(String, nullable=False)

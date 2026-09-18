@@ -12,7 +12,12 @@ from sqlalchemy.orm import Session
 from ...database.db import get_db
 from ...database import crud
 from ...agent.graph import agent
-from ...agent.utils import build_patient_summary, find_nearest_encounter, format_vitals_summary
+from ...agent.utils import (
+    build_patient_summary,
+    find_nearest_encounter,
+    format_vitals_summary,
+    format_vitals_timeseries_summary,
+)
 from .. import schema
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -33,6 +38,18 @@ def run_agent(payload: schema.AgentRunRequest, db: Session = Depends(get_db)):
 
     encounters = crud.get_encounters_for_patient(db, payload.patient_id)
 
+    def _vitals_summary(p) -> str | None:
+        # Two independent vitals sources may exist for a given prediction: a
+        # clinician-recorded encounter snapshot, and/or the 24h monitor feed
+        # uploaded alongside the image on the Predict page. Surface both when
+        # present rather than picking one.
+        parts = [
+            format_vitals_summary(find_nearest_encounter(encounters, p.created_at)),
+            format_vitals_timeseries_summary(p.vitals),
+        ]
+        parts = [part for part in parts if part]
+        return "; ".join(parts) if parts else None
+
     records = [
         {
             "created_at": p.created_at.isoformat(),
@@ -43,7 +60,7 @@ def run_agent(payload: schema.AgentRunRequest, db: Session = Depends(get_db)):
             "notes": p.notes or "",
             "wbc": p.wbc,
             "crp": p.crp,
-            "vitals_summary": format_vitals_summary(find_nearest_encounter(encounters, p.created_at)),
+            "vitals_summary": _vitals_summary(p),
         }
         for p in predictions
     ]
